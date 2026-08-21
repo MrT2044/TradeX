@@ -66,7 +66,9 @@ def main() -> int:
         print("Erst importieren: scripts/fetch_databento.py oder scripts/generate_demo_data.py")
         return 1
 
-    report = check(series, args.symbol, base_tf, SessionCalendar(instrument))
+    report = check(
+        series, args.symbol, base_tf, SessionCalendar(instrument), config.data.min_gap_bars
+    )
     context = MarketContext(args.symbol, instrument, config)
     updates = context.feed(series)
 

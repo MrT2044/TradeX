@@ -51,6 +51,7 @@ class DataConfig(_Frozen):
     log_dir: Path = Path("logs")
     default_symbol: str = "MNQ"
     base_timeframe: Timeframe = Timeframe.M1
+    min_gap_bars: int = Field(default=5, ge=1)
 
 
 class TimeframesConfig(_Frozen):
@@ -375,7 +376,13 @@ def _parse_time(raw: str) -> time:
 
 
 def _build_instrument(symbol: str, spec: dict[str, Any], defaults: dict[str, Any]) -> Instrument:
-    hours = defaults["trading_hours"]
+    # Handelszeiten und Sessions duerfen je Instrument ueberschrieben werden.
+    # Noetig, weil nicht jedes Instrument den CME-Zeiten folgt: der
+    # Nasdaq-100-Index-CFD pausiert z.B. 15:15-17:05 statt 16:00-17:00.
+    # Ohne Ueberschreibung wuerde die Integritaetspruefung dessen normale
+    # Handelspause taeglich als Datenluecke melden.
+    hours = {**defaults["trading_hours"], **spec.get("trading_hours", {})}
+    session_spec = {**defaults["sessions"], **spec.get("sessions", {})}
     sessions = tuple(
         SessionWindow(
             name=SessionName(name),
@@ -383,7 +390,7 @@ def _build_instrument(symbol: str, spec: dict[str, Any], defaults: dict[str, Any
             end=_parse_time(window["end"]),
             crosses_midnight=bool(window.get("crosses_midnight", False)),
         )
-        for name, window in defaults["sessions"].items()
+        for name, window in session_spec.items()
     )
     return Instrument(
         symbol=symbol,
@@ -398,6 +405,7 @@ def _build_instrument(symbol: str, spec: dict[str, Any], defaults: dict[str, Any
         price_decimals=int(spec["price_decimals"]),
         databento_dataset=spec["databento_dataset"],
         databento_continuous=spec["databento_continuous"],
+        dukascopy_symbol=spec.get("dukascopy_symbol", ""),
         contract_months=tuple(defaults["contract_months"]),
         trading_hours=TradingHours(
             week_open=WeekBoundary(

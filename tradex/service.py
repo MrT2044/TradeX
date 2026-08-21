@@ -142,7 +142,13 @@ class TradexService:
                 "Zuerst importieren: scripts/fetch_databento.py oder scripts/generate_demo_data.py"
             )
 
-        report = check(series, symbol, base_timeframe, SessionCalendar(instrument))
+        report = check(
+            series,
+            symbol,
+            base_timeframe,
+            SessionCalendar(instrument),
+            self.config.data.min_gap_bars,
+        )
         if not report.is_clean:
             log.warning("data_integrity", summary=report.summary())
             for gap in report.gaps:

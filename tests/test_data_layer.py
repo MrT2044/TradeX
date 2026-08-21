@@ -1,4 +1,4 @@
-﻿"""Datenschicht: Kalender, Integritaet, Bar-Store, Rolls."""
+"""Datenschicht: Kalender, Integritaet, Bar-Store, Rolls."""
 
 from __future__ import annotations
 
@@ -112,7 +112,7 @@ def test_findet_luecke_in_offener_marktzeit(mnq: Instrument):
     for i in [0, 1, 2, 8, 9]:  # 5 fehlende Minuten
         series.append(to_ns(start + timedelta(minutes=i)), 100, 101, 99, 100, 10)
 
-    gaps = find_gaps(series, Timeframe.M1, SessionCalendar(mnq))
+    gaps, _sparse = find_gaps(series, Timeframe.M1, SessionCalendar(mnq))
     assert len(gaps) == 1
     assert gaps[0].missing_bars == 5
 
@@ -125,7 +125,7 @@ def test_wochenende_ist_keine_luecke(mnq: Instrument):
     series.append(to_ns(friday_close), 100, 101, 99, 100, 10)
     series.append(to_ns(sunday_open), 100, 101, 99, 100, 10)
 
-    assert find_gaps(series, Timeframe.M1, SessionCalendar(mnq)) == ()
+    assert find_gaps(series, Timeframe.M1, SessionCalendar(mnq))[0] == ()
 
 
 def test_findet_unmoegliche_bars():

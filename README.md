@@ -37,10 +37,10 @@ python -m tradex.shell
 > Oberfläche und Detektoren zu prüfen — **nicht**, um irgendetwas über die
 > Strategie auszusagen.
 
-Echte MNQ-Historie (zeigt vor jedem Abruf den Preis, siehe unten):
+Echte Marktdaten — kostenlos, ohne Konto und ohne Kreditkarte:
 
 ```bash
-python scripts/fetch_databento.py --symbol MNQ --from 2023-01-01 --dry-run
+python scripts/fetch_dukascopy.py --from 2023-01-01
 ```
 
 ---
@@ -49,18 +49,46 @@ python scripts/fetch_databento.py --symbol MNQ --from 2023-01-01 --dry-run
 
 Recherchestand August 2026. Zielvorgabe war ≈ 5 USD/Monat (Spec §3, §26).
 
-| Zweck | Quelle | Kosten |
-|---|---|---|
-| **Historie / Backtest** | Databento `GLBX.MDP3`, nach Verbrauch | **≈ 0 USD** — 125 USD Startguthaben decken mehrere Jahre MNQ 1m |
-| **Live / Paper** (ab Phase 5) | NinjaTrader + CME Level 1 non-professional | **≈ 4 USD/Monat** |
-| Level 2 / Markttiefe | NinjaTrader CME Level 2 | ~16 USD/Monat — **außerhalb Budget, bewusst nicht genutzt** |
-| Entwicklung ohne Kosten | NinjaTrader Free License: Sim, Market Replay | 0 USD |
+| Zweck | Quelle | Kosten | Konto nötig? |
+|---|---|---|---|
+| **Historie / Backtest** | **Dukascopy** — Nasdaq-100-Index-CFD, 1m ab 2011 | **0 USD** | **nein** |
+| Historie (echte Futures) | Databento `GLBX.MDP3` | ≈ 0 USD (125 USD Startguthaben) | ja, **Kreditkarte** |
+| **Live / Paper** (ab Phase 5) | NinjaTrader + CME Level 1 non-professional | **≈ 4 USD/Monat** | ja |
+| Level 2 / Markttiefe | NinjaTrader CME Level 2 | ~16 USD/Monat — **außerhalb Budget, bewusst nicht genutzt** | ja |
 
 **Laufende Gesamtkosten im Zielzustand: ≈ 4 USD/Monat.**
 
-Databentos *Live*-Abo (~199 USD/Monat) wird nicht verwendet — nur die Historie.
+Databento verlangt zur Freischaltung eine Kreditkarte. Deshalb ist **Dukascopy**
+die Standardquelle für die Historie: öffentlicher Datenfeed, kein Konto, keine
+Zahlungsdaten, 1-Minuten-Kerzen ab 2011.
+
+### Was der Dukascopy-Weg liefert — und was nicht
+
+Geladen wird der Nasdaq-100-**Index** als CFD, nicht der MNQ-**Future**. Der
+Unterschied muss beim Deuten von Backtest-Ergebnissen präsent bleiben:
+
+| | Index-CFD (`MNQ_PROXY`) | MNQ-Future |
+|---|---|---|
+| Preis | Index | Index ± Basis (Finanzierung, Dividenden) |
+| Rollen | keine | quartalsweise |
+| Volumen | Aktivitätskennzahl | gehandelte Kontrakte |
+| Handelspause | 15:15–17:06 CT *(gemessen)* | 16:00–17:00 CT |
+
+Die Intraday-Struktur ist praktisch identisch — für die Frage „hat die
+Regelmechanik einen Edge?" ist das eine gute Näherung. **Für die Freigabe von
+Echtgeld braucht es echte MNQ-Daten** (NinjaTrader ab Phase 5).
+
 Weil Markttiefe nicht im Budget liegt, darf die Kernstrategie nie davon abhängen
 (Spec §4). `ProviderCapabilities` macht für jede Quelle explizit, was sie liefert.
+Dass Volumen bei diesem Proxy keine Kontrakte sind, ist genau der Grund, warum
+`volume_is_gate` in der Displacement-Regel per Default aus ist.
+
+> **Fair bleiben:** Der Feed ist kostenlos und wird bei zu dichten Anfragen
+> gedrosselt (HTTP 503). Der Importer hält deshalb einen Mindestabstand ein und
+> wartet bei Drosselung deutlich länger. **Nie zwei Läufe parallel starten** —
+> das löst die Sperre zuverlässig aus. Ein Lauf schafft rund 5 Handelstage pro
+> Minute; drei Jahre dauern etwa 2,5 Stunden. Der Abruf ist unterbrechbar und
+> setzt beim nächsten Start dort fort, wo er aufgehört hat.
 
 **Technischer Befund zu NinjaTrader:** Die externe API (`NTDirect.dll` / ATI)
 liefert nur gepolltes last/bid/ask sowie Order-Entry — **keine Bars, keine

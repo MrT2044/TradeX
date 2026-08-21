@@ -159,7 +159,13 @@ def main() -> int:
     print()
     print("Pruefe Datenqualitaet ...")
     stored = store.read(instrument.symbol, timeframe)
-    report = check(stored, instrument.symbol, timeframe, SessionCalendar(instrument))
+    report = check(
+        stored,
+        instrument.symbol,
+        timeframe,
+        SessionCalendar(instrument),
+        config.data.min_gap_bars,
+    )
     print(f"  {report.summary()}")
     if report.gaps:
         print(f"  Groesste Luecken (von {len(report.gaps)}):")

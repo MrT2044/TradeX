@@ -79,6 +79,8 @@ class Instrument:
     price_decimals: int
     databento_dataset: str
     databento_continuous: str
+    dukascopy_symbol: str
+    """Instrumentkuerzel bei Dukascopy; leer, wenn dort nicht verfuegbar."""
     contract_months: tuple[str, ...]
     trading_hours: TradingHours
     sessions: tuple[SessionWindow, ...]

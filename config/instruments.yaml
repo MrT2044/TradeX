@@ -65,6 +65,40 @@ instruments:
     contract_size: 1
     price_decimals: 2
 
+  # Nasdaq-100-Index als CFD von Dukascopy - kostenlose Historie ab 2011,
+  # ohne Konto und ohne Zahlungsmittel.
+  #
+  # BEWUSST ein eigenes Symbol: Das sind ECHTE Marktdaten, aber vom INDEX,
+  # nicht vom MNQ-Future. Der Future notiert mit Auf-/Abschlag zum Index und
+  # rollt quartalsweise; das Volumen ist bei Dukascopy eine Aktivitaetskennzahl
+  # statt gehandelter Kontrakte. Die Intraday-Struktur ist praktisch identisch,
+  # weshalb sich die Regelmechanik hier gut pruefen laesst - fuer die Freigabe
+  # von Echtgeld braucht es aber echte MNQ-Daten.
+  #
+  # Tick- und Punktwerte sind bewusst die von MNQ: gemessen wird, wie sich die
+  # MNQ-Strategie auf Nasdaq-100-Kursverlauf verhaelt. Der Importer rundet die
+  # Kurse dafuer auf das 0,25er-Raster.
+  MNQ_PROXY:
+    name: "Nasdaq-100 Index CFD (Dukascopy) - Naeherung fuer MNQ"
+    databento_dataset: GLBX.MDP3
+    databento_continuous: "MNQ.c.0"
+    dukascopy_symbol: "USATECHIDXUSD"
+    tick_size: 0.25
+    tick_value: 0.50
+    point_value: 2.00
+    contract_size: 1
+    price_decimals: 2
+    # Der CFD folgt NICHT exakt den CME-Zeiten. Aus einem Monat Daten gemessen:
+    # letzte Bar vor der Pause 15:14 CT, erste danach 17:06 CT. Ohne diese
+    # Ueberschreibung meldet die Integritaetspruefung die normale Handelspause
+    # des Instruments taeglich als Datenluecke.
+    trading_hours:
+      daily_break: { start: "15:15", end: "17:06" }
+    # ny_pm endet entsprechend frueher - sonst waere das Session-Hoch/Tief aus
+    # einem Zeitraum gebildet, fuer den es gar keine Kurse gibt.
+    sessions:
+      ny_pm: { start: "12:00", end: "15:15", crosses_midnight: false }
+
   # Synthetische Daten zum Pruefen der Oberflaeche und der Detektoren, solange
   # noch keine echte Historie vorliegt. BEWUSST ein eigenes Symbol: so kann
   # generierter Kursverlauf niemals mit echten Marktdaten verwechselt werden,

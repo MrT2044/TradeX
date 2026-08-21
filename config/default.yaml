@@ -24,6 +24,10 @@ data:
   log_dir: logs
   default_symbol: MNQ
   base_timeframe: 1m          # aus dieser TF werden alle hoeheren aggregiert
+  # Ab wie vielen zusammenhaengenden fehlenden Bars gilt es als Datenluecke.
+  # Einzelne fehlende Minuten bedeuten nur, dass gerade nicht gehandelt wurde -
+  # bei Futures normal. Erst laengere Loecher sind ein Datenproblem.
+  min_gap_bars: 5
 
 timeframes:
   # Spec §5 - konfigurierbar. Reihenfolge = Analysereihenfolge (gross -> klein).
