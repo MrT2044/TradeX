@@ -28,6 +28,8 @@ from tradex.data.store import Coverage
 from tradex.domain.bars import Bar, BarSeries
 from tradex.domain.instruments import Instrument
 from tradex.persistence.models import Reason
+from tradex.strategy.setup import SetupCandidate
+from tradex.strategy.signal import StrategyDecision, TradeSignal
 
 
 class _Dto(BaseModel):
@@ -485,3 +487,136 @@ class LogEntryDto(_Dto):
     level: str
     event: str
     fields: dict[str, object] = {}
+
+
+# ------------------------------------------------------------ Strategie (Ph. 3)
+class SetupDto(_Dto):
+    """Ein Setup-Kandidat samt Fortschritt entlang der Pflichtkette."""
+
+    id: int
+    direction: str
+    stage: str
+    created_ts: int
+    sweep_price: float
+    sweep_kind: str
+    invalidation_price: float
+    checklist: dict[str, bool]
+    missing: tuple[str, ...]
+    fvg_top: float | None = None
+    fvg_bottom: float | None = None
+    retracement_extreme: float | None = None
+    displacement_strength: float | None = None
+
+    @classmethod
+    def of(cls, candidate: SetupCandidate) -> SetupDto:
+        return cls(
+            id=candidate.id,
+            direction=candidate.direction.value,
+            stage=candidate.stage.value,
+            created_ts=candidate.created_ts,
+            sweep_price=candidate.sweep.pool_price,
+            sweep_kind=candidate.sweep.pool_kind.value,
+            invalidation_price=candidate.invalidation_price,
+            checklist=candidate.checklist(),
+            missing=tuple(candidate.missing_conditions()),
+            fvg_top=candidate.fvg.top if candidate.fvg else None,
+            fvg_bottom=candidate.fvg.bottom if candidate.fvg else None,
+            retracement_extreme=candidate.retracement_extreme,
+            displacement_strength=(
+                round(candidate.displacement.strength, 4) if candidate.displacement else None
+            ),
+        )
+
+
+class TradeSignalDto(_Dto):
+    """Ein durchgerechneter Einstieg. In Phase 3 wird er NICHT ausgefuehrt."""
+
+    setup_id: int
+    symbol: str
+    side: str
+    entry: float
+    stop: float
+    target: float
+    stop_ticks: float
+    rr: float
+    quantity: int
+    risk_amount: float
+    reward_amount: float
+    entry_ts: int
+    stop_anchor: str
+    target_source: str
+
+    @classmethod
+    def of(cls, signal: TradeSignal) -> TradeSignalDto:
+        return cls(
+            setup_id=signal.setup_id,
+            symbol=signal.symbol,
+            side=signal.side,
+            entry=signal.entry,
+            stop=signal.stop,
+            target=signal.target,
+            stop_ticks=round(signal.stop_ticks, 1),
+            rr=round(signal.rr, 2),
+            quantity=signal.quantity,
+            risk_amount=round(signal.risk_amount, 2),
+            reward_amount=round(signal.reward_amount, 2),
+            entry_ts=signal.entry_ts,
+            stop_anchor=signal.stop_anchor,
+            target_source=signal.target_source,
+        )
+
+
+class StrategyDecisionDto(_Dto):
+    """Eine protokollierte Entscheidung - mit oder ohne Trade (Spec §25)."""
+
+    ts: int
+    symbol: str
+    timeframe: str
+    setup_id: int
+    direction: str
+    decision: str
+    stage: str
+    htf_bias: str
+    checklist: dict[str, bool]
+    missing: tuple[str, ...]
+    blocking_reason: str
+    reasons: tuple[ReasonDto, ...]
+    signal: TradeSignalDto | None = None
+
+    @classmethod
+    def of(cls, decision: StrategyDecision) -> StrategyDecisionDto:
+        return cls(
+            ts=decision.ts,
+            symbol=decision.symbol,
+            timeframe=decision.timeframe,
+            setup_id=decision.setup_id,
+            direction=decision.direction.value,
+            decision=decision.decision,
+            stage=decision.stage,
+            htf_bias=decision.htf_bias,
+            checklist=decision.checklist,
+            missing=tuple(decision.missing),
+            blocking_reason=decision.blocking_reason,
+            reasons=tuple(ReasonDto.of(r) for r in decision.reasons),
+            signal=TradeSignalDto.of(decision.signal) if decision.signal else None,
+        )
+
+
+class StrategyStateDto(_Dto):
+    """Gesamtbild der Strategie fuer das Dashboard."""
+
+    symbol: str
+    enabled: bool
+    setup_timeframe: str
+    confirmation_timeframe: str
+    stop_anchor: str
+    min_rr: float
+    active_setups: tuple[SetupDto, ...]
+    recent_decisions: tuple[StrategyDecisionDto, ...]
+    last_signal: TradeSignalDto | None
+    decisions_total: int
+    trades_total: int
+    no_trades_total: int
+    rejection_counts: dict[str, int]
+    """Wie oft welcher Grund einen Trade verhindert hat - beantwortet die Frage
+    'warum wird nicht gehandelt?' auf einen Blick."""

@@ -171,11 +171,19 @@ strategy:
   max_active_setups: 4
 
 # ----------------------------------------------------------------- Stop Loss
-# Spec §11: kein willkuerlicher Abstand. Anker ist das Extrem des Sweeps -
-# also genau der Punkt, den der Markt getestet und abgelehnt hat. Darunter
-# kommt ein Puffer, damit normales Rauschen den Stop nicht abholt.
+# Spec §11: kein willkuerlicher Abstand, sondern ein Kurs mit Bedeutung.
+#
+# Der Einstieg erfolgt auf den MSS NACH dem Ruecklauf. Der Punkt, an dem genau
+# diese Idee kippt, ist das Extrem des Ruecklaufs - deshalb ist er der Anker.
+# Das Sweep-Extrem waere inhaltlich der Ursprung des Setups, liegt zum
+# Einstiegszeitpunkt aber eine ganze Impulsbewegung entfernt und macht den Stop
+# systematisch weit.
+#
+# WELCHER ANKER TATSAECHLICH BESSER IST, MUSS DER BACKTEST IN PHASE 4 ZEIGEN.
+# `retracement` ist gesetzt, weil es zum Einstiegsmodell passt - nicht, weil es
+# auf irgendwelchen Daten besser ausgesehen haette.
 stops:
-  anchor: sweep                   # sweep | swing | fvg
+  anchor: retracement             # retracement | sweep | swing | fvg
   buffer_atr_mult: 0.25
   buffer_min_ticks: 4
   min_stop_ticks: 8               # darunter ist der Stop im Rauschen

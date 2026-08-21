@@ -1,10 +1,28 @@
 """Stop-Loss-Bestimmung (Spec §11).
 
-Der Stop darf nicht willkuerlich gewaehlt werden. Anker ist das EXTREM DES
-SWEEPS - also genau der Kurs, den der Markt getestet und abgelehnt hat. Wird er
-wieder erreicht, war die Grundannahme des Setups falsch, und der Trade gehoert
-beendet. Damit hat der Stop eine inhaltliche Bedeutung statt eines
-Dollarbetrags.
+Der Stop darf nicht willkuerlich gewaehlt werden. Anker ist immer ein Kurs mit
+inhaltlicher Bedeutung - kein Dollarbetrag.
+
+Welcher Anker passt zu diesem Einstieg?
+---------------------------------------
+Der Einstieg erfolgt auf den MSS NACH dem Ruecklauf in die FVG. Zwischen dem
+urspruenglichen Sweep und diesem Einstieg liegt die gesamte Impulsbewegung.
+
+    retracement  Extrem des Ruecklaufs. Genau hier kippt die EINSTIEGSIDEE:
+                 wird es unterboten, war der Strukturbruch nicht tragfaehig.
+                 Standard, weil es der Punkt ist, auf den sich der Einstieg
+                 tatsaechlich stuetzt.
+    sweep        Extrem des Sweeps. Inhaltlich der Ursprung des Setups, liegt
+                 zum Einstiegszeitpunkt aber eine ganze Impulsbewegung entfernt.
+                 Der Stop wird dadurch systematisch weit und das CRV schlecht.
+    swing        Letzter bestaetigter Swing auf der Setup-Ebene.
+    fvg          Gegenkante der FVG-Zone.
+
+Die Wahl ist eine STRATEGIEENTSCHEIDUNG, keine Feinabstimmung. Welcher Anker
+ueber einen ausreichend langen Zeitraum die bessere Erwartung liefert, muss der
+Backtest in Phase 4 beantworten - `retracement` ist als Standard gesetzt, weil
+es zum Einstiegsmodell passt, nicht weil es auf irgendwelchen Daten besser
+aussah.
 
 Darunter kommt ein Puffer, damit normales Rauschen den Stop nicht abholt:
 
@@ -141,7 +159,9 @@ def _anchor(
     """
     candidates: list[tuple[float, str]] = []
 
-    if params.anchor == "swing" and recent_swing is not None:
+    if params.anchor == "retracement" and candidate.retracement_extreme is not None:
+        candidates.append((candidate.retracement_extreme, "retracement"))
+    elif params.anchor == "swing" and recent_swing is not None:
         candidates.append((recent_swing.price, "swing"))
     elif params.anchor == "fvg" and candidate.fvg is not None:
         zone = candidate.fvg

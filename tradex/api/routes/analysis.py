@@ -10,9 +10,13 @@ from tradex.api.schemas import (
     DisplacementDto,
     FvgDto,
     LiquidityPoolDto,
+    SetupDto,
+    StrategyDecisionDto,
+    StrategyStateDto,
     StructureEventDto,
     SweepDto,
     SwingDto,
+    TradeSignalDto,
 )
 from tradex.api.state import get_service
 from tradex.domain.enums import Timeframe
@@ -143,3 +147,42 @@ def record(symbol: str) -> dict[str, int | str]:
     """Aktuellen Analysezustand ins Entscheidungsprotokoll schreiben (Spec §25)."""
     service = get_service()
     return {"id": service.record_analysis(symbol), "symbol": symbol.upper()}
+
+
+@router.get("/strategy")
+def strategy(symbol: str, limit: int = Query(default=30, ge=1, le=500)) -> StrategyStateDto:
+    """Setup-Kandidaten, Entscheidungen und Signale (Spec §7-§13).
+
+    `rejection_counts` beantwortet die haeufigste Frage beim Zusehen: Warum
+    wird gerade nicht gehandelt? Ohne diese Aufstellung muesste man sich die
+    Antwort aus Hunderten Einzelentscheidungen zusammensuchen.
+    """
+    service = get_service()
+    engine = service.strategy(symbol)
+    decisions = engine.recent_decisions(limit)
+
+    rejections: dict[str, int] = {}
+    for decision in engine.decisions:
+        if decision.is_trade:
+            continue
+        code = decision.blocking_reason or "unbekannt"
+        rejections[code] = rejections.get(code, 0) + 1
+
+    stats = engine.stats()
+    return StrategyStateDto(
+        symbol=engine.symbol,
+        enabled=service.config.strategy.enabled,
+        setup_timeframe=engine.setup_tf.value,
+        confirmation_timeframe=engine.confirmation_tf.value,
+        stop_anchor=service.config.stops.anchor,
+        min_rr=service.config.risk.min_rr,
+        active_setups=tuple(SetupDto.of(c) for c in engine.active_candidates()),
+        recent_decisions=tuple(StrategyDecisionDto.of(d) for d in decisions),
+        last_signal=TradeSignalDto.of(engine.signals[-1]) if engine.signals else None,
+        decisions_total=stats["decisions"],
+        trades_total=stats["trades"],
+        no_trades_total=stats["no_trades"],
+        rejection_counts=dict(
+            sorted(rejections.items(), key=lambda kv: kv[1], reverse=True)
+        ),
+    )

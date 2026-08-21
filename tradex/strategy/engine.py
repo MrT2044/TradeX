@@ -297,6 +297,7 @@ class StrategyEngine:
         candidate.retraced_ts = bar.ts
         candidate.retraced_price = probe
         candidate.retraced_confirmation_index = len(context.series(self.confirmation_tf)) - 1
+        candidate.track_retracement_extreme(bar.low, bar.high)
         candidate.advance(SetupStage.RETRACED, index, bar.ts, f"fill={fill:.2f}")
 
     # -------------------------------------------------------- Bestaetigungsebene
@@ -310,6 +311,11 @@ class StrategyEngine:
         for candidate in list(self.candidates):
             if candidate.stage is not SetupStage.RETRACED:
                 continue
+
+            # Das Ruecklauf-Extrem waechst bis zur Bestaetigung weiter - der
+            # Stop-Anker muss den tiefsten Punkt kennen, den der Ruecklauf
+            # tatsaechlich erreicht hat, nicht nur den der ersten Beruehrung.
+            candidate.track_retracement_extreme(update.bar.low, update.bar.high)
 
             started = candidate.retraced_confirmation_index or 0
             if index - started > self.params.confirmation_max_age_bars:

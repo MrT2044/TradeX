@@ -10,12 +10,14 @@ import type {
   Integrity,
   LogEntry,
   Overlays,
+  StrategyState,
 } from './api/types';
 import { TradeChart, type ChartToggles } from './chart/TradeChart';
 import { de } from './i18n/de';
 import { AnalysisPanel } from './panels/AnalysisPanel';
 import { ReplayControls } from './panels/ReplayControls';
 import { StatusBar } from './panels/StatusBar';
+import { StrategyPanel } from './panels/StrategyPanel';
 import { SystemPanel } from './panels/SystemPanel';
 
 const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h'];
@@ -40,6 +42,7 @@ export default function App() {
   const [bars, setBars] = useState<BarsResponse | null>(null);
   const [overlays, setOverlays] = useState<Overlays | null>(null);
   const [snapshot, setSnapshot] = useState<ContextSnapshot | null>(null);
+  const [strategy, setStrategy] = useState<StrategyState | null>(null);
   const [integrity, setIntegrity] = useState<Integrity | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
 
@@ -95,15 +98,17 @@ export default function App() {
   // --- Chartdaten und Analyse fuer den aktuellen Stand holen ---------------
   const refreshView = useCallback(
     async (targetSymbol: string, targetTimeframe: string) => {
-      const [barsData, overlayData, snapshotData, logData] = await Promise.all([
+      const [barsData, overlayData, snapshotData, strategyData, logData] = await Promise.all([
         api.bars(targetSymbol, targetTimeframe),
         api.overlays(targetSymbol, targetTimeframe),
         api.analysis(targetSymbol),
+        api.strategy(targetSymbol),
         api.logs(120),
       ]);
       setBars(barsData);
       setOverlays(overlayData);
       setSnapshot(snapshotData);
+      setStrategy(strategyData);
       setLogs(logData);
     },
     [],
@@ -334,6 +339,7 @@ export default function App() {
 
         <aside className="layout__side">
           <AnalysisPanel snapshot={snapshot} entryTimeframe={ENTRY_TIMEFRAME} />
+          <StrategyPanel strategy={strategy} />
           <SystemPanel health={health} integrity={integrity} logs={logs} />
         </aside>
       </main>

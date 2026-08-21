@@ -202,7 +202,7 @@ class StrategyConfig(_Frozen):
 class StopsConfig(_Frozen):
     """Spec §11."""
 
-    anchor: Literal["sweep", "swing", "fvg"] = "sweep"
+    anchor: Literal["retracement", "sweep", "swing", "fvg"] = "retracement"
     buffer_atr_mult: float = Field(default=0.25, ge=0)
     buffer_min_ticks: float = Field(default=4, ge=0)
     min_stop_ticks: float = Field(default=8, gt=0)

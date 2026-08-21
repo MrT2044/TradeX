@@ -3,9 +3,10 @@
 Regelbasiertes, backtestbares Analyse- und (später) Handelssystem für
 Nasdaq-100-Futures (MNQ/NQ).
 
-**Aktueller Stand: Phase 1 + 2 — Fundament und deterministische Analyse-Engine.**
-Es werden Muster erkannt und angezeigt. Es gibt noch keine Strategie, keine
-Einstiege, keine Orders und keinen Backtest.
+**Aktueller Stand: Phase 1–3 — Analyse, Strategie und Risikosteuerung.**
+Setups werden erkannt, Einstieg, Stop, Ziel und Positionsgröße werden
+durchgerechnet und protokolliert. **Es werden keine Orders ausgeführt** — das
+kommt ab Phase 5. Einen Backtest gibt es noch nicht (Phase 4).
 
 ---
 
@@ -126,6 +127,48 @@ belegten Größen** — sie zu prüfen ist Aufgabe des Backtests in Phase 4.
 | **Sweep** | Durchstich **und** Rückeroberung innerhalb von `max_reclaim_bars`. Ohne Rückeroberung ist es ein Ausbruch, kein Sweep. |
 | **HTF Bias** | Gewichtet aus Struktur, FVG-Balance und Liquiditäts-Zug über 4H/1H, mit Neutralband. |
 
+## Die Strategie (Phase 3)
+
+Die Pflichtkette aus §7 als Zustandsmaschine. Fehlt ein Glied, entsteht kein
+Trade — der Bot ergänzt nichts:
+
+```
+HTF Bias → Liquidity Sweep → Displacement → FVG → Retracement → MSS → Entry
+   4H/1H  └──────────── Setup-Ebene 5m ────────────┘  └─ 1m ─┘
+```
+
+| Baustein | Regel |
+|---|---|
+| **Stop** (§11) | Anker ist das **Rücklauf-Tief** — der Punkt, an dem die Einstiegsidee kippt. Puffer wächst mit dem ATR. Zu enge und zu weite Stops werden abgelehnt, nicht zurechtgebogen. |
+| **Ziel** (§12) | Nächste unberührte Liquidität, die das Mindest-CRV schafft. Schafft es keine, entsteht kein Trade. |
+| **Größe** (§10) | `abrunden(Risikobudget ÷ (Stopabstand × Punktwert))`. Ergibt das 0, gibt es keinen Trade — der Stop wird **nicht** enger gesetzt, damit es passt. |
+| **Grenzen** (§10, §24) | Tagesverlust, Trades/Tag, offene Positionen — geführt je Globex-Handelstag. |
+| **Handelsfenster** (§13) | Session und Volatilität sind **Filter, keine Auslöser**. Eine erreichte Uhrzeit löst nie einen Trade aus. |
+
+### Warum der Stop am Rücklauf-Tief hängt
+
+Der Einstieg erfolgt auf den MSS **nach** dem Rücklauf. Zwischen dem
+ursprünglichen Sweep und diesem Einstieg liegt die ganze Impulsbewegung — ein
+Stop am Sweep-Extrem wäre dadurch systematisch weit. Auf den Demodaten halbierte
+der passende Anker den Stop-Median von 113 auf 52 Ticks.
+
+**Welcher Anker über einen langen Zeitraum tatsächlich besser ist, muss der
+Backtest in Phase 4 beantworten.** `retracement` ist gesetzt, weil es zum
+Einstiegsmodell passt — nicht, weil es auf irgendwelchen Daten besser aussah.
+`sweep`, `swing` und `fvg` bleiben als Alternativen konfigurierbar.
+
+### Kontogröße und Stopweite hängen zusammen
+
+Bei 10.000 $ und 0,25 % Risiko sind 25 $ pro Trade erlaubt. MNQ kostet 2 $ je
+Punkt — der größte bezahlbare Stop ist damit **12,5 Punkte (50 Ticks)**. Für
+5m-Setups ist das knapp. Eine Konsistenzprüfung meldet beim Start, wenn
+`stops.max_stop_ticks`, Kontogröße und Instrument nicht zusammenpassen, statt
+stillschweigend jedes Setup mit „Positionsgröße 0" zu verwerfen. Sie **ändert
+keine Werte** — ob kleineres Risiko, größeres Konto oder engerer Stop, ist deine
+Entscheidung.
+
+---
+
 Zwei Entscheidungen, die eine Begründung verdienen:
 
 - **Volumen ist kein Gate.** Ob Volumen verfügbar ist, hängt an der Datenquelle.
@@ -180,7 +223,7 @@ Parallel `python -m tradex.shell --server` laufen lassen.)
 |---|---|---|
 | 1 | Architektur, Daten, Speicher, UI-Gerüst | **fertig** |
 | 2 | Multi-Timeframe-Analyse, alle Detektoren | **fertig** |
-| 3 | Strategy Engine, SL/TP, Risk Management | offen |
+| 3 | Strategy Engine, SL/TP, Risk Management | **fertig** |
 | 4 | Backtesting und Statistik (Spec §19) | offen |
 | 5 | NinjaTrader Paper Trading | offen |
 | 6 | News- und KI-Kontextschicht | offen |

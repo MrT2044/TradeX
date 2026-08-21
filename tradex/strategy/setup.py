@@ -102,6 +102,13 @@ class SetupCandidate:
     retraced_index: int | None = None
     retraced_ts: int | None = None
     retraced_price: float | None = None
+    retracement_extreme: float | None = None
+    """Tiefster (bullish) bzw. hoechster (bearish) Kurs seit dem Ruecklauf.
+
+    Das ist der Punkt, an dem die EINSTIEGSIDEE kippt: Der Einstieg erfolgt auf
+    den MSS nach dem Ruecklauf; wird dessen Extrem wieder unterboten, war der
+    Strukturbruch nicht tragfaehig. Wird bis zur Bestaetigung fortgeschrieben.
+    """
     confirmation: StructureEvent | None = None
     confirmed_index: int | None = None
 
@@ -129,6 +136,16 @@ class SetupCandidate:
     @property
     def is_open(self) -> bool:
         return self.stage.is_open
+
+    def track_retracement_extreme(self, low: float, high: float) -> None:
+        """Extrem des Ruecklaufs fortschreiben, solange die Bestaetigung aussteht."""
+        probe = low if self.is_bullish else high
+        if self.retracement_extreme is None:
+            self.retracement_extreme = probe
+        elif self.is_bullish:
+            self.retracement_extreme = min(self.retracement_extreme, probe)
+        else:
+            self.retracement_extreme = max(self.retracement_extreme, probe)
 
     def advance(self, stage: SetupStage, index: int, ts: int, note: str = "") -> None:
         self.stage = stage

@@ -255,3 +255,77 @@ export interface LogEntry {
   event: string;
   fields: Record<string, unknown>;
 }
+
+// ------------------------------------------------------------ Strategie (Ph. 3)
+export type SetupStage =
+  | 'swept'
+  | 'displaced'
+  | 'retraced'
+  | 'confirmed'
+  | 'invalidated'
+  | 'expired';
+
+export interface Setup {
+  id: number;
+  direction: Direction;
+  stage: SetupStage;
+  created_ts: number;
+  sweep_price: number;
+  sweep_kind: LiquidityKind;
+  invalidation_price: number;
+  checklist: Record<string, boolean>;
+  missing: string[];
+  fvg_top: number | null;
+  fvg_bottom: number | null;
+  retracement_extreme: number | null;
+  displacement_strength: number | null;
+}
+
+export interface TradeSignal {
+  setup_id: number;
+  symbol: string;
+  side: 'LONG' | 'SHORT';
+  entry: number;
+  stop: number;
+  target: number;
+  stop_ticks: number;
+  rr: number;
+  quantity: number;
+  risk_amount: number;
+  reward_amount: number;
+  entry_ts: number;
+  stop_anchor: string;
+  target_source: string;
+}
+
+export interface StrategyDecision {
+  ts: number;
+  symbol: string;
+  timeframe: string;
+  setup_id: number;
+  direction: Direction;
+  decision: 'LONG' | 'SHORT' | 'NO_TRADE';
+  stage: SetupStage;
+  htf_bias: BiasValue;
+  checklist: Record<string, boolean>;
+  missing: string[];
+  blocking_reason: string;
+  reasons: Reason[];
+  signal: TradeSignal | null;
+}
+
+export interface StrategyState {
+  symbol: string;
+  enabled: boolean;
+  setup_timeframe: string;
+  confirmation_timeframe: string;
+  stop_anchor: string;
+  min_rr: number;
+  active_setups: Setup[];
+  recent_decisions: StrategyDecision[];
+  last_signal: TradeSignal | null;
+  decisions_total: number;
+  trades_total: number;
+  no_trades_total: number;
+  rejection_counts: Record<string, number>;
+}

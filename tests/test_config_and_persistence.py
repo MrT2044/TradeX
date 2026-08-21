@@ -124,6 +124,48 @@ def test_alle_reason_codes_sind_registriert():
     assert declared == set(reasons.ALL_CODES)
 
 
+def test_jeder_reason_code_hat_eine_deutsche_uebersetzung():
+    """Die Engine liefert Codes, das UI uebersetzt sie - beide muessen zusammenpassen.
+
+    Ohne diese Pruefung faellt ein fehlender Code erst auf, wenn im Dashboard
+    ein roher Bezeichner oder "undefined" steht.
+    """
+    translations = (PROJECT_ROOT / "ui" / "src" / "i18n" / "de.ts").read_text(encoding="utf-8")
+    missing = [code for code in reasons.ALL_CODES if f"'{code}'" not in translations]
+    assert not missing, f"Ohne deutsche Uebersetzung: {missing}"
+
+
+def test_ablehnungscodes_haben_eine_kurzbezeichnung():
+    """Die Zaehlansicht hat keine Parameter - dort braucht es parameterfreie Labels.
+
+    Genau hier stand zuvor "undefined" im Dashboard, weil die ausformulierten
+    Saetze ohne Parameter uebersetzt wurden.
+    """
+    translations = (PROJECT_ROOT / "ui" / "src" / "i18n" / "de.ts").read_text(encoding="utf-8")
+    label_block = translations.split("export const reasonLabel", 1)[-1].split("};", 1)[0]
+
+    rejection_codes = [
+        reasons.SETUP_INVALIDATED_BEYOND_SWEEP,
+        reasons.SETUP_INVALIDATED_BIAS_FLIP,
+        reasons.SETUP_EXPIRED,
+        reasons.MSS_MISSING,
+        reasons.TARGET_RR_TOO_LOW,
+        reasons.TARGET_NONE,
+        reasons.STOP_TOO_WIDE,
+        reasons.STOP_TOO_TIGHT,
+        reasons.RISK_SIZE_ZERO,
+        reasons.RISK_DAILY_LOSS_LIMIT,
+        reasons.RISK_MAX_TRADES,
+        reasons.RISK_MAX_POSITIONS,
+        reasons.WINDOW_SESSION_BLOCKED,
+        reasons.WINDOW_VOLATILITY_LOW,
+        reasons.WINDOW_VOLATILITY_HIGH,
+        reasons.DECISION_NO_TRADE,
+    ]
+    missing = [code for code in rejection_codes if f"'{code}'" not in label_block]
+    assert not missing, f"Ohne Kurzbezeichnung fuer die Zaehlansicht: {missing}"
+
+
 # ------------------------------------------------------------------ Persistenz
 def test_migration_legt_schema_an(tmp_path: Path):
     database = tmp_path / "tradex.db"

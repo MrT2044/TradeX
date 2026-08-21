@@ -29,6 +29,14 @@ const STATE_WORD: Record<string, string> = {
   range: 'seitwaerts',
 };
 
+/** Woran der Stop verankert ist - siehe tradex/strategy/stops.py. */
+export const STOP_ANCHOR: Record<string, string> = {
+  retracement: 'Rücklauf-Tief',
+  sweep: 'Sweep-Extrem',
+  swing: 'letzter Hoch-/Tiefpunkt',
+  fvg: 'Kursluecken-Kante',
+};
+
 /** Uebersetzt einen Reason-Code der Engine in einen deutschen Satz. */
 export const reasonText: Record<string, (p: ReasonParams) => string> = {
   'htf.bias': (p) =>
@@ -62,6 +70,55 @@ export const reasonText: Record<string, (p: ReasonParams) => string> = {
   'mss.found': (p) => `Struktur auf ${p.timeframe} hat gedreht (${p.type})`,
   'mss.missing': () => 'Die Struktur hat noch nicht gedreht',
 
+  'setup.started': (p) => `Setup gestartet nach Sweep bei ${price(p.sweep)}`,
+  'setup.complete': (p) =>
+    `Alle Pflichtbedingungen erfuellt (Sweep ${price(p.sweep)}, Kursluecke ${num(p.fvg_ticks, 0)} Ticks)`,
+  'setup.invalidated_beyond_sweep': (p) =>
+    `Kurs ist wieder unter das Sweep-Extrem ${price(p.sweep_extreme)} gefallen - die Grundannahme gilt nicht mehr`,
+  'setup.invalidated_bias_flip': (p) =>
+    `Die Gesamtrichtung hat auf ${BIAS_WORD[String(p.bias)] ?? p.bias} gedreht`,
+  'setup.expired': (p) => `Zeitfenster abgelaufen (${p.age_bars} Bars in Stufe "${p.stage}")`,
+
+  'stop.placed': (p) =>
+    `Stop bei ${price(p.price)} (${num(p.ticks, 0)} Ticks, Anker: ${STOP_ANCHOR[String(p.anchor)] ?? p.anchor})`,
+  'stop.too_wide': (p) => `Stop zu weit: ${num(p.ticks, 0)} Ticks, erlaubt sind ${p.max}`,
+  'stop.too_tight': (p) =>
+    `Stop zu eng: ${num(p.ticks, 0)} Ticks - er laege im normalen Rauschen (mindestens ${p.min})`,
+
+  'target.liquidity': (p) =>
+    `Ziel ${price(p.price)} an der naechsten unberuehrten Liquiditaet, CRV ${num(p.rr, 2)}`,
+  'target.fallback_r_multiple': (p) =>
+    `Kein Liquiditaetsziel in Reichweite - festes Vielfaches, CRV ${num(p.rr, 2)}`,
+  'target.none': () => 'Kein brauchbares Ziel gefunden',
+  'target.rr_too_low': (p) =>
+    `Bestes erreichbares CRV ${num(p.best_rr, 2)} liegt unter dem Minimum ${num(p.min_rr, 1)}`,
+
+  'risk.size_ok': (p) =>
+    `${p.quantity} Kontrakt(e), Risiko ${num(p.risk_amount, 2)} USD von ${num(p.risk_budget, 2)} USD`,
+  'risk.size_zero': (p) =>
+    `Schon ein Kontrakt riskiert ${num(p.risk_per_contract, 2)} USD - mehr als das Budget von ${num(p.risk_budget, 2)} USD (Stop ${num(p.stop_ticks, 0)} Ticks)`,
+  'risk.size_capped': (p) => `Stueckzahl auf ${p.quantity} begrenzt (Obergrenze ${p.cap})`,
+  'risk.daily_loss_limit': (p) =>
+    `Tagesverlust ${num(p.realized_loss, 2)} USD gegen Limit ${num(p.limit, 2)} USD`,
+  'risk.max_trades_per_day': (p) => `${p.taken} von ${p.limit} Trades heute bereits genommen`,
+  'risk.max_open_positions': (p) => `${p.open} von ${p.limit} Positionen bereits offen`,
+  'risk.disabled': () => 'Risikopruefung ist abgeschaltet',
+
+  'window.ok': () => 'Handelsfenster passt',
+  'window.session_blocked': (p) =>
+    `Session "${p.session}" ist nicht freigegeben (erlaubt: ${Array.isArray(p.allowed) ? p.allowed.join(', ') : '-'})`,
+  'window.volatility_low': (p) =>
+    `Zu ruhig: ${num(p.atr_ticks, 0)} Ticks Schwankungsbreite, mindestens ${p.min} noetig`,
+  'window.volatility_high': (p) =>
+    `Zu volatil: ${num(p.atr_ticks, 0)} Ticks Schwankungsbreite, hoechstens ${p.max} erlaubt`,
+
+  'decision.trade': (p) =>
+    `${p.side}: Einstieg ${price(p.entry)}, Stop ${price(p.stop)}, Ziel ${price(p.target)}, CRV ${num(p.rr, 2)}, ${p.quantity} Kontrakt(e)`,
+  'decision.no_trade': (p) =>
+    Array.isArray(p.missing) && p.missing.length
+      ? `Kein Trade - es fehlt: ${(p.missing as string[]).join(', ')}`
+      : 'Kein Trade',
+
   'data.warmup': (p) => `Noch zu wenig Historie (${p.bars} von ${p.required} Bars)`,
   'data.gap': (p) => `Luecke in den Daten: ${p.missing_bars} fehlende Bars`,
   'data.roll_boundary': () => 'Kontraktwechsel - Preissprung ist ein Buchungsartefakt',
@@ -71,6 +128,36 @@ export const reasonText: Record<string, (p: ReasonParams) => string> = {
 export function translateReason(code: string, params: ReasonParams): string {
   const fn = reasonText[code];
   return fn ? fn(params) : code;
+}
+
+/**
+ * Kurzbezeichnungen ohne Parameter.
+ *
+ * Fuer die Zaehlansicht ("184x Kurs hinter den Sweep gefallen") gibt es keine
+ * Parameter - dort wuerden die ausformulierten Saetze aus `reasonText`
+ * "undefined" einsetzen. Deshalb eine eigene, parameterfreie Liste.
+ */
+export const reasonLabel: Record<string, string> = {
+  'setup.invalidated_beyond_sweep': 'Kurs wieder hinter das Sweep-Extrem gefallen',
+  'setup.invalidated_bias_flip': 'Gesamtrichtung hat gedreht',
+  'setup.expired': 'Zeitfenster abgelaufen',
+  'mss.missing': 'Struktur hat nicht rechtzeitig gedreht',
+  'target.rr_too_low': 'Chance-Risiko-Verhaeltnis zu schlecht',
+  'target.none': 'Kein brauchbares Ziel',
+  'stop.too_wide': 'Stop zu weit',
+  'stop.too_tight': 'Stop zu eng',
+  'risk.size_zero': 'Stop zu weit fuer das Risikobudget',
+  'risk.daily_loss_limit': 'Tagesverlustlimit erreicht',
+  'risk.max_trades_per_day': 'Maximale Trades pro Tag erreicht',
+  'risk.max_open_positions': 'Maximal offene Positionen erreicht',
+  'window.session_blocked': 'Session nicht freigegeben',
+  'window.volatility_low': 'Zu geringe Schwankungsbreite',
+  'window.volatility_high': 'Zu hohe Schwankungsbreite',
+  'decision.no_trade': 'Setup unvollstaendig',
+};
+
+export function translateReasonLabel(code: string): string {
+  return reasonLabel[code] ?? code;
 }
 
 export const de = {
@@ -137,6 +224,45 @@ export const de = {
     lastMss: 'letzter Strukturbruch',
     lastDisplacement: 'letzter Impuls',
     none: 'keiner',
+  },
+  strategy: {
+    title: 'Strategie',
+    activeSetups: 'Setups im Aufbau',
+    noSetups: 'Zurzeit kein Setup im Aufbau',
+    lastSignal: 'Letztes Signal',
+    noSignal: 'Noch kein Signal',
+    decisions: 'Entscheidungen',
+    trades: 'Signale',
+    noTrades: 'Ablehnungen',
+    whyNoTrade: 'Warum wird nicht gehandelt?',
+    entry: 'Einstieg',
+    stop: 'Stop',
+    target: 'Ziel',
+    rr: 'CRV',
+    quantity: 'Kontrakte',
+    risk: 'Risiko',
+    reward: 'Chance',
+    stopAnchor: 'Stop-Anker',
+    setupTf: 'Setup-Ebene',
+    confirmTf: 'Bestaetigung',
+    minRr: 'Mindest-CRV',
+    notExecuted:
+      'Signale werden berechnet und protokolliert, aber nicht ausgefuehrt. Ausfuehrung kommt ab Phase 5.',
+    stages: {
+      swept: 'Liquiditaet geholt',
+      displaced: 'Impuls + Kursluecke',
+      retraced: 'Ruecklauf erfolgt',
+      confirmed: 'bestaetigt',
+      invalidated: 'ungueltig',
+      expired: 'verfallen',
+    } as Record<string, string>,
+    conditions: {
+      sweep: 'Liquidity Sweep',
+      displacement: 'Impuls',
+      fvg: 'Kursluecke',
+      retracement: 'Ruecklauf',
+      mss: 'Strukturbruch',
+    } as Record<string, string>,
   },
   replay: {
     title: 'Wiedergabe',

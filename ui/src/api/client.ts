@@ -10,6 +10,7 @@ import type {
   LogEntry,
   Overlays,
   StepResponse,
+  StrategyState,
 } from './types';
 
 export class ApiError extends Error {
@@ -71,6 +72,11 @@ export const api = {
 
   analysis: (symbol: string) =>
     request<ContextSnapshot>(`/analysis?symbol=${encodeURIComponent(symbol)}`),
+
+  strategy: (symbol: string, limit = 30) =>
+    request<StrategyState>(
+      `/strategy?symbol=${encodeURIComponent(symbol)}&limit=${limit}`,
+    ),
 
   overlays: (symbol: string, timeframe: string) =>
     request<Overlays>(
