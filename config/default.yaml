@@ -1,0 +1,158 @@
+# ============================================================================
+#  TradeX - zentrale Konfiguration
+# ============================================================================
+#  ARCHITEKTUR-INVARIANTE 4 (Spec §29):
+#  Jeder Schwellenwert des Systems steht in dieser Datei. Im Code darf keine
+#  einzige Magic Number stehen. Was hier nicht steht, existiert nicht.
+#
+#  Alle Werte unten sind STARTWERTE (Hypothesen), die in Phase 4 per Backtest
+#  untersucht werden. Sie werden hier NICHT als "richtig" behauptet.
+# ============================================================================
+
+version: 1
+
+app:
+  language: de
+  display_timezone: Europe/Berlin
+  host: 127.0.0.1
+  port: 8765
+  log_level: INFO
+
+data:
+  parquet_dir: data/parquet
+  database: data/tradex.db
+  log_dir: logs
+  default_symbol: MNQ
+  base_timeframe: 1m          # aus dieser TF werden alle hoeheren aggregiert
+
+timeframes:
+  # Spec §5 - konfigurierbar. Reihenfolge = Analysereihenfolge (gross -> klein).
+  htf: ["4h", "1h"]
+  intermediate: ["15m", "5m"]
+  entry: ["1m"]
+
+analysis:
+
+  # ---------------------------------------------------------------- Volatilitaet
+  volatility:
+    atr_period: 14
+    atr_method: wilder          # wilder | sma
+    volume_sma_period: 20
+    # Mindestanzahl geschlossener Bars, bevor ein TF ueberhaupt analysiert wird.
+    min_bars_required: 60
+
+  # -------------------------------------------------------------------- Swings
+  # Swing High(n): high[i] == max(high[i-n .. i+n]) und strikt groesser als
+  # mindestens ein Nachbar je Seite. Bestaetigung braucht n Bars -> der Lag
+  # ist explizit und wird pro Swing als `confirmed_at_index` mitgeloggt.
+  swings:
+    default_strength: 2
+    per_timeframe:
+      "1m": 3
+      "5m": 2
+      "15m": 2
+      "1h": 2
+      "4h": 2
+    max_tracked: 300
+
+  # ---------------------------------------------------------------- Structure
+  # BOS bullish   = Close ueber letztem bestaetigten Swing High.
+  # MSS bullish   = Close ueber letztem bestaetigten Swing High, waehrend der
+  #                 letzte abgeschlossene Leg ein Lower Low erzeugt hat.
+  # Immer Close-basiert, nie Docht-basiert.
+  structure:
+    confirm_on: close           # close | wick
+    min_break_ticks: 1
+    max_events: 300
+
+  # --------------------------------------------------------------------- FVG
+  # Bullish FVG ueber Bars (i-2, i-1, i):  low[i] > high[i-2]
+  #   Zone = [high[i-2], low[i]]
+  # Bearish FVG:                           high[i] < low[i-2]
+  #   Zone = [high[i], low[i-2]]
+  fvg:
+    min_size_ticks: 4
+    min_atr_mult: 0.15
+    mitigation_threshold: 0.5   # Anteil der Zone, dessen Durchhandeln = MITIGATED
+    mitigation_on: close        # close | wick
+    max_age_bars: 500
+    max_tracked: 300
+    skip_roll_boundary: true    # FVGs ueber Contract-Roll-Grenzen sind Phantome
+
+  # ------------------------------------------------------------ Displacement
+  # Bullish Displacement an Bar i - ALLE Bedingungen muessen gelten:
+  #   range[i] > range_atr_mult * ATR
+  #   body[i] / range[i] > body_ratio_min
+  #   close[i] > high[i-1]                     (falls require_break_prev_extreme)
+  #   volume[i] > volume_mult * SMA(volume)    (nur Gate wenn volume_is_gate)
+  displacement:
+    range_atr_mult: 1.5
+    body_ratio_min: 0.6
+    require_break_prev_extreme: true
+    volume_mult: 1.5
+    volume_is_gate: false       # Volumen ist nicht garantiert verfuegbar ->
+                                # setzt nur das Flag `volume_confirmed`
+    # strength in [0,1], rein informativ in Phase 2 - KEIN Filter.
+    strength_weights:
+      range: 0.5
+      body: 0.3
+      volume: 0.2
+    strength_range_cap_atr_mult: 4.0    # ab hier zaehlt range als 1.0
+    strength_volume_cap_mult: 4.0       # ab hier zaehlt volume als 1.0
+
+  # --------------------------------------------------------------- Liquiditaet
+  liquidity:
+    equal_tolerance_ticks: 3    # Swings innerhalb dieser Spanne = Equal Highs/Lows
+    equal_min_count: 2
+    equal_lookback_swings: 30
+    include_swing_levels: true
+    include_session_levels: true
+    include_prior_day: true
+    include_prior_week: true
+    max_tracked: 300
+
+  # -------------------------------------------------------------------- Sweep
+  # Sell-Side Sweep (bullish):
+  #   low[i] < pool.price - min_penetration_ticks
+  #   UND Close zurueck ueber pool.price innerhalb max_reclaim_bars Bars.
+  sweep:
+    min_penetration_ticks: 2
+    max_reclaim_bars: 3
+    reclaim_on: close           # close | wick
+    max_tracked: 200
+
+  # ---------------------------------------------------------------- HTF Bias
+  # Score in [-1, +1]. |score| < neutral_band -> NEUTRAL.
+  bias:
+    timeframe_weights:
+      "4h": 0.6
+      "1h": 0.4
+    component_weights:
+      structure: 0.5
+      fvg: 0.25
+      liquidity: 0.25
+    neutral_band: 0.20
+
+# ============================================================================
+#  Ab hier: Platzhalter fuer spaetere Phasen. In Phase 1+2 NICHT aktiv.
+#  Bewusst schon dokumentiert, damit die Werte nie im Code landen.
+# ============================================================================
+
+risk:            # Phase 3 - Spec §10
+  enabled: false
+  account_size: 10000.0
+  risk_per_trade_pct: 0.25
+  max_daily_loss_pct: 1.0
+  max_trades_per_day: 3
+  max_open_positions: 1
+  min_rr: 2.0
+  max_spread_ticks: 2
+  max_slippage_ticks: 2
+
+execution:       # Phase 5/8/9 - Spec §18
+  mode: analysis_only         # analysis_only | paper_manual | paper_auto
+                              # | live_manual | live_auto
+  live_trading_enabled: false # Spec §24: Live standardmaessig deaktiviert
+
+news:            # Phase 6 - Spec §14/§15
+  enabled: false
