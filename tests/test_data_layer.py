@@ -1,4 +1,4 @@
-"""Datenschicht: Kalender, Integritaet, Bar-Store, Rolls."""
+﻿"""Datenschicht: Kalender, Integritaet, Bar-Store, Rolls."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from tradex.data.integrity import check, find_gaps, find_invalid_bars
 from tradex.data.rolls import mark_rolls_from_symbols, quarterly_expiries, third_friday
 from tradex.data.sessions import SessionCalendar, SessionResolver
 from tradex.data.store import BarStore
-from tradex.domain.bars import BarSeries, to_ns
+from tradex.domain.bars import BarSeries, from_ns, to_ns
 from tradex.domain.enums import SessionName, Timeframe
 from tradex.domain.instruments import Instrument
 
@@ -33,6 +33,33 @@ def test_session_zuordnung(mnq: Instrument, utc_time: str, expected: SessionName
     ts = to_ns(datetime.strptime(utc_time, "%Y-%m-%d %H:%M").replace(tzinfo=UTC))
     calendar = SessionCalendar(mnq)
     assert calendar.sessions(np.array([ts]))[0] == expected.value
+
+
+def test_sessions_decken_den_handelstag_lueckenlos_ab(mnq: Instrument):
+    """session == CLOSED muss genau dann gelten, wenn der Markt geschlossen ist.
+
+    Bleibt eine Zeitspanne von keinem Session-Fenster abgedeckt, meldet der
+    Kalender dort "geschlossen", waehrend die Handelszeiten "offen" sagen. Die
+    Folge waeren Phantom-Datenluecken und falsche Session-High/Low-Level.
+    Genau dieser Fall (17:00-18:00 CT gehoerte zu keiner Session) ist beim
+    ersten Analyselauf aufgefallen.
+    """
+    calendar = SessionCalendar(mnq)
+    start = datetime(2025, 3, 3, 0, 0, tzinfo=UTC)
+    stamps = np.array(
+        [to_ns(start + timedelta(minutes=i)) for i in range(60 * 24 * 7)], dtype=np.int64
+    )
+
+    is_open = calendar.is_open(stamps)
+    is_closed_session = calendar.sessions(stamps) == SessionName.CLOSED.value
+
+    mismatches = np.flatnonzero(is_open & is_closed_session)
+    assert mismatches.size == 0, (
+        f"{mismatches.size} Minuten ohne Session trotz offenem Markt, "
+        f"erste bei {from_ns(int(stamps[mismatches[0]]))} UTC"
+        if mismatches.size
+        else ""
+    )
 
 
 def test_handelstag_beginnt_um_17_uhr_ct(mnq: Instrument):

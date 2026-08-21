@@ -115,13 +115,24 @@ MIGRATIONS: list[tuple[int, str]] = [
 CURRENT_SCHEMA_VERSION = MIGRATIONS[-1][0]
 
 
-def connect(database: Path, *, read_only: bool = False) -> sqlite3.Connection:
-    """Verbindung mit den fuer diese App richtigen PRAGMAs oeffnen."""
+def connect(
+    database: Path, *, read_only: bool = False, check_same_thread: bool = True
+) -> sqlite3.Connection:
+    """Verbindung mit den fuer diese App richtigen PRAGMAs oeffnen.
+
+    `check_same_thread=False` wird nur dort gesetzt, wo eine Verbindung
+    absichtlich ueber Threadgrenzen hinweg benutzt wird - FastAPI fuehrt
+    synchrone Endpunkte in einem Threadpool aus. Die Serialisierung uebernimmt
+    dann ein Lock auf Aufruferseite (siehe `DecisionLog`); ohne das waere es
+    schlicht ein abgeschaltetes Sicherheitsnetz.
+    """
     database.parent.mkdir(parents=True, exist_ok=True)
     if read_only:
-        conn = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
+        conn = sqlite3.connect(
+            f"file:{database}?mode=ro", uri=True, check_same_thread=check_same_thread
+        )
     else:
-        conn = sqlite3.connect(database)
+        conn = sqlite3.connect(database, check_same_thread=check_same_thread)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode = WAL")
     conn.execute("PRAGMA synchronous = NORMAL")

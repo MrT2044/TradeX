@@ -63,6 +63,10 @@ class Fvg:
     touched_index: int | None = None
     mitigated_index: int | None = None
     expired_index: int | None = None
+    # Zeitstempel des Endes. Das Chart zeichnet erledigte Zonen nur bis hierhin -
+    # eine mitigierte Zone bis zum rechten Rand weiterzuziehen wuerde suggerieren,
+    # dass sie noch relevant ist, und das Bild mit Altlasten zustellen.
+    closed_ts: int | None = None
     max_fill: float = 0.0
     """Groesster bisher erreichter Fuellgrad in [0, 1]."""
     meta: dict[str, float] = field(default_factory=dict)
@@ -163,6 +167,7 @@ class FvgTracker:
             if zone.max_fill >= threshold:
                 zone.state = FvgState.MITIGATED
                 zone.mitigated_index = index
+                zone.closed_ts = int(series.ts[index])
                 if zone.touched_index is None:
                     zone.touched_index = index
             elif index - zone.created_index > self.params.max_age_bars:
@@ -170,6 +175,7 @@ class FvgTracker:
                 # dieselbe Bar, ist "mitigiert" die aussagekraeftigere Information.
                 zone.state = FvgState.EXPIRED
                 zone.expired_index = index
+                zone.closed_ts = int(series.ts[index])
 
     # ---------------------------------------------------------------- Erkennung
     def _detect(self, series: BarSeries, index: int, atr_value: float) -> list[Fvg]:

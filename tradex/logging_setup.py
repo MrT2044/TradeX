@@ -53,18 +53,26 @@ def setup_logging(level: str = "INFO", log_dir: Path | None = None) -> None:
 
     numeric_level = getattr(logging, level.upper(), logging.INFO)
 
+    # Diese Kette laeuft sowohl fuer eigene structlog-Ereignisse als auch - je
+    # Handler einmal - fuer fremde Logrecords (uvicorn, Bibliotheken).
     shared_processors: list[structlog.types.Processor] = [
         structlog.contextvars.merge_contextvars,
         structlog.processors.add_log_level,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.format_exc_info,
-        _UiBufferProcessor(),
     ]
 
+    # Der UI-Puffer haengt BEWUSST nur in der structlog-Kette, nicht in der
+    # foreign_pre_chain der Handler. Zwei Gruende:
+    #   1. Die foreign_pre_chain laeuft einmal PRO HANDLER - dort eingehaengt
+    #      landete jeder Eintrag mehrfach im Puffer.
+    #   2. So enthaelt das Protokoll im UI nur Ereignisse der Engine und nicht
+    #      jede HTTP-Zugriffszeile von uvicorn. Die bleiben in Konsole und Datei.
     structlog.configure(
         processors=[
             *shared_processors,
+            _UiBufferProcessor(),
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
         logger_factory=structlog.stdlib.LoggerFactory(),

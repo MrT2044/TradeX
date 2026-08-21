@@ -1,0 +1,10 @@
+# Im Repository immer LF, im Arbeitsverzeichnis die Windows-Konvention.
+# Ohne das meldet Git bei jeder Datei eine CRLF-Umwandlung.
+* text=auto eol=lf
+
+# Binaerdateien nie anfassen.
+*.parquet binary
+*.db       binary
+*.png      binary
+*.jpg      binary
+*.ico      binary

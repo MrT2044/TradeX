@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -50,16 +51,21 @@ def config_fingerprint(config_path: Path) -> tuple[str, str]:
 class DecisionLog:
     """Schreibender Zugriff auf `decision_log`, `system_events` und `data_gaps`.
 
-    Haelt eine offene Verbindung. Nicht threadsafe - pro Thread eine Instanz,
-    oder Aufrufe serialisieren.
+    Haelt eine offene Verbindung und serialisiert alle Zugriffe ueber ein Lock.
+    Das ist noetig, weil FastAPI synchrone Endpunkte in einem Threadpool
+    ausfuehrt: die Verbindung wird also zwangslaeufig aus wechselnden Threads
+    benutzt. Das Lock schuetzt dabei nicht nur SQLite selbst, sondern auch
+    `_known_config_hashes`.
     """
 
     def __init__(self, database: Path) -> None:
-        self._conn = connect(database)
+        self._conn = connect(database, check_same_thread=False)
+        self._lock = threading.Lock()
         self._known_config_hashes: set[str] = set()
 
     def close(self) -> None:
-        self._conn.close()
+        with self._lock:
+            self._conn.close()
 
     def __enter__(self) -> DecisionLog:
         return self
@@ -73,7 +79,7 @@ class DecisionLog:
         digest, content = config_fingerprint(config_path)
         if digest in self._known_config_hashes:
             return digest
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 "INSERT OR IGNORE INTO config_snapshots (config_hash, ts_utc, content) "
                 "VALUES (?, ?, ?)",
@@ -84,7 +90,7 @@ class DecisionLog:
 
     # -------------------------------------------------------------- Schreiben
     def record(self, record: DecisionRecord) -> int:
-        with self._conn:
+        with self._lock, self._conn:
             cursor = self._conn.execute(
                 """
                 INSERT INTO decision_log (
@@ -144,7 +150,7 @@ class DecisionLog:
             )
             for r in records
         ]
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.executemany(
                 """
                 INSERT INTO decision_log (
@@ -159,7 +165,7 @@ class DecisionLog:
         return len(rows)
 
     def event(self, event: SystemEvent) -> None:
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 "INSERT INTO system_events (ts_utc, level, category, message, payload) "
                 "VALUES (?,?,?,?,?)",
@@ -173,7 +179,7 @@ class DecisionLog:
             )
 
     def record_gap(self, gap: DataGapRecord) -> None:
-        with self._conn:
+        with self._lock, self._conn:
             self._conn.execute(
                 "INSERT OR IGNORE INTO data_gaps "
                 "(symbol, timeframe, gap_start_ts, gap_end_ts, missing_bars, detected_at) "
@@ -197,17 +203,21 @@ class DecisionLog:
             params.append(symbol)
         sql += " ORDER BY id DESC LIMIT ?"
         params.append(limit)
-        return [_row_to_dict(row) for row in self._conn.execute(sql, params)]
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [_row_to_dict(row) for row in rows]
 
     def gaps(self, symbol: str, timeframe: str) -> list[dict[str, Any]]:
-        rows = self._conn.execute(
-            "SELECT * FROM data_gaps WHERE symbol = ? AND timeframe = ? ORDER BY gap_start_ts",
-            (symbol, timeframe),
-        )
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT * FROM data_gaps WHERE symbol = ? AND timeframe = ? ORDER BY gap_start_ts",
+                (symbol, timeframe),
+            ).fetchall()
         return [dict(row) for row in rows]
 
     def count(self) -> int:
-        row = self._conn.execute("SELECT COUNT(*) AS n FROM decision_log").fetchone()
+        with self._lock:
+            row = self._conn.execute("SELECT COUNT(*) AS n FROM decision_log").fetchone()
         return int(row["n"])
 
 

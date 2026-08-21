@@ -119,6 +119,7 @@ class FvgDto(_Dto):
     max_fill: float
     touched_index: int | None = None
     mitigated_index: int | None = None
+    closed_ts: int | None = None
 
     @classmethod
     def of(cls, zone: Fvg) -> FvgDto:
@@ -134,6 +135,7 @@ class FvgDto(_Dto):
             max_fill=round(zone.max_fill, 4),
             touched_index=zone.touched_index,
             mitigated_index=zone.mitigated_index,
+            closed_ts=zone.closed_ts,
         )
 
 

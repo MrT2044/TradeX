@@ -144,6 +144,9 @@ def test_lebenszyklus_open_touched_mitigated(config: Config):
     assert zone.touched_index == 4
     assert zone.mitigated_index == 5
     assert not zone.is_active
+    # closed_ts markiert, wo die Zone abgearbeitet wurde. Das Chart zeichnet
+    # erledigte Zonen nur bis dorthin, statt sie bis zum rechten Rand zu ziehen.
+    assert zone.closed_ts == int(series.ts[5])
 
 
 def test_erzeugende_bar_mitigiert_nicht_sich_selbst(config: Config):
@@ -175,6 +178,20 @@ def test_ablauf_nach_max_age(config: Config):
     zone = tracker.zones[0]
     assert zone.state is FvgState.EXPIRED
     assert zone.expired_index == 5
+    assert zone.closed_ts == int(series.ts[5])
+
+
+def test_aktive_zone_hat_kein_ende(config: Config):
+    """Solange eine Zone aktiv ist, bleibt closed_ts leer - das Chart zieht sie
+    dann bis zum rechten Rand durch."""
+    series = make_series(
+        [(98, 100, 97, 99), (99, 108, 99, 107), (107, 110, 105, 109), (109, 112, 108, 111)]
+    )
+    tracker = FvgTracker(config.analysis.fvg, TICK)
+    _run(tracker, series)
+    zone = tracker.zones[0]
+    assert zone.is_active
+    assert zone.closed_ts is None
 
 
 def test_fuellgrad_und_mitigationspreis(config: Config):

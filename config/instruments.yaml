@@ -23,8 +23,17 @@ defaults:
     daily_reset: "17:00"                        # Beginn des Globex-Handelstages
 
   # Analyse-Sessions (Spec §5, §13). Sessions duerfen Mitternacht ueberspannen.
+  #
+  # WICHTIG: Die Fenster muessen den Handelstag LUECKENLOS abdecken.
+  # Bleibt eine Zeitspanne unbelegt, gilt dort session=CLOSED, waehrend der
+  # Markt laut Handelszeiten offen ist. Das erzeugt Phantom-Datenluecken und
+  # falsche Session-Grenzen bei der Liquiditaetsbildung.
+  # Deshalb beginnt "asia" bereits um 17:00 (Globex-Open) und nicht erst um
+  # 18:00 - die erste Stunde nach der Wartungspause gehoert zur Asia-Phase.
+  # Die Invariante "session == CLOSED genau dann, wenn Markt geschlossen"
+  # wird von tests/test_data_layer.py geprueft.
   sessions:
-    asia:    { start: "18:00", end: "02:00", crosses_midnight: true }
+    asia:    { start: "17:00", end: "02:00", crosses_midnight: true }
     london:  { start: "02:00", end: "08:30", crosses_midnight: false }
     ny_am:   { start: "08:30", end: "12:00", crosses_midnight: false }
     ny_pm:   { start: "12:00", end: "16:00", crosses_midnight: false }
@@ -53,5 +62,19 @@ instruments:
     tick_size: 0.25
     tick_value: 5.00
     point_value: 20.00
+    contract_size: 1
+    price_decimals: 2
+
+  # Synthetische Daten zum Pruefen der Oberflaeche und der Detektoren, solange
+  # noch keine echte Historie vorliegt. BEWUSST ein eigenes Symbol: so kann
+  # generierter Kursverlauf niemals mit echten Marktdaten verwechselt werden,
+  # und die Oberflaeche zeigt dafuer eine deutliche Warnung an.
+  MNQ_DEMO:
+    name: "SYNTHETISCHE DEMODATEN - keine Marktdaten"
+    databento_dataset: GLBX.MDP3
+    databento_continuous: "MNQ.c.0"
+    tick_size: 0.25
+    tick_value: 0.50
+    point_value: 2.00
     contract_size: 1
     price_decimals: 2
