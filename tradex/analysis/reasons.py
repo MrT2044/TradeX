@@ -41,6 +41,43 @@ RETRACEMENT_MISSING: Final = "retracement.missing"
 MSS_FOUND: Final = "mss.found"
 MSS_MISSING: Final = "mss.missing"
 
+# --- Setup-Lebenszyklus (Spec §7-§9) ----------------------------------------
+SETUP_STARTED: Final = "setup.started"
+SETUP_INVALIDATED_BEYOND_SWEEP: Final = "setup.invalidated_beyond_sweep"
+SETUP_INVALIDATED_BIAS_FLIP: Final = "setup.invalidated_bias_flip"
+SETUP_EXPIRED: Final = "setup.expired"
+SETUP_COMPLETE: Final = "setup.complete"
+
+# --- Stop Loss (Spec §11) ---------------------------------------------------
+STOP_PLACED: Final = "stop.placed"
+STOP_TOO_WIDE: Final = "stop.too_wide"
+STOP_TOO_TIGHT: Final = "stop.too_tight"
+
+# --- Take Profit (Spec §12) -------------------------------------------------
+TARGET_LIQUIDITY: Final = "target.liquidity"
+TARGET_FALLBACK: Final = "target.fallback_r_multiple"
+TARGET_NONE: Final = "target.none"
+TARGET_RR_TOO_LOW: Final = "target.rr_too_low"
+
+# --- Risiko (Spec §10, §24) -------------------------------------------------
+RISK_SIZE_OK: Final = "risk.size_ok"
+RISK_SIZE_ZERO: Final = "risk.size_zero"
+RISK_SIZE_CAPPED: Final = "risk.size_capped"
+RISK_DAILY_LOSS_LIMIT: Final = "risk.daily_loss_limit"
+RISK_MAX_TRADES: Final = "risk.max_trades_per_day"
+RISK_MAX_POSITIONS: Final = "risk.max_open_positions"
+RISK_DISABLED: Final = "risk.disabled"
+
+# --- Handelsfenster (Spec §13) ----------------------------------------------
+WINDOW_SESSION_BLOCKED: Final = "window.session_blocked"
+WINDOW_VOLATILITY_LOW: Final = "window.volatility_low"
+WINDOW_VOLATILITY_HIGH: Final = "window.volatility_high"
+WINDOW_OK: Final = "window.ok"
+
+# --- Endergebnis ------------------------------------------------------------
+DECISION_TRADE: Final = "decision.trade"
+DECISION_NO_TRADE: Final = "decision.no_trade"
+
 # --- Datenqualitaet und Betriebszustand (Spec §24) --------------------------
 DATA_WARMUP: Final = "data.warmup"
 DATA_GAP: Final = "data.gap"
@@ -65,6 +102,31 @@ ALL_CODES: Final[tuple[str, ...]] = (
     RETRACEMENT_MISSING,
     MSS_FOUND,
     MSS_MISSING,
+    SETUP_STARTED,
+    SETUP_INVALIDATED_BEYOND_SWEEP,
+    SETUP_INVALIDATED_BIAS_FLIP,
+    SETUP_EXPIRED,
+    SETUP_COMPLETE,
+    STOP_PLACED,
+    STOP_TOO_WIDE,
+    STOP_TOO_TIGHT,
+    TARGET_LIQUIDITY,
+    TARGET_FALLBACK,
+    TARGET_NONE,
+    TARGET_RR_TOO_LOW,
+    RISK_SIZE_OK,
+    RISK_SIZE_ZERO,
+    RISK_SIZE_CAPPED,
+    RISK_DAILY_LOSS_LIMIT,
+    RISK_MAX_TRADES,
+    RISK_MAX_POSITIONS,
+    RISK_DISABLED,
+    WINDOW_SESSION_BLOCKED,
+    WINDOW_VOLATILITY_LOW,
+    WINDOW_VOLATILITY_HIGH,
+    WINDOW_OK,
+    DECISION_TRADE,
+    DECISION_NO_TRADE,
     DATA_WARMUP,
     DATA_GAP,
     DATA_ROLL,

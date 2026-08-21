@@ -134,20 +134,95 @@ analysis:
     neutral_band: 0.20
 
 # ============================================================================
-#  Ab hier: Platzhalter fuer spaetere Phasen. In Phase 1+2 NICHT aktiv.
-#  Bewusst schon dokumentiert, damit die Werte nie im Code landen.
+#  STRATEGIE (Phase 3) - Spec §6-§9
+# ============================================================================
+#  Die Pflichtkette lautet:
+#      HTF Bias -> Liquidity Sweep -> Displacement -> FVG -> Retracement
+#               -> Lower-Timeframe Confirmation (MSS) -> Entry
+#
+#  Fehlt auch nur EINE Bedingung, entsteht kein Trade (Spec §9). Der Bot
+#  ergaenzt nichts und "erraet" nichts.
 # ============================================================================
 
-risk:            # Phase 3 - Spec §10
-  enabled: false
+strategy:
+  enabled: true
+
+  # Auf welcher Ebene sich das Setup entwickelt und wo es bestaetigt wird (Spec §5).
+  setup_timeframe: "5m"
+  confirmation_timeframe: "1m"
+
+  # Zeitfenster der Kette, jeweils in Bars des SETUP-Timeframes.
+  # Sie sind der Grund, warum ein Setup verfaellt statt ewig offen zu bleiben:
+  # ein Sweep von vor drei Stunden hat mit dem jetzigen Impuls nichts mehr zu tun.
+  sweep_max_age_bars: 20          # Sweep -> Displacement
+  displacement_max_age_bars: 6    # Displacement muss zeitnah zum Sweep liegen
+  fvg_max_age_bars: 60            # FVG -> Retracement
+  confirmation_max_age_bars: 20   # Retracement -> MSS (in Confirmation-Bars)
+
+  # Ab welchem Fuellgrad der FVG-Zone das Retracement als erfolgt gilt.
+  # 0.0 = Beruehrung genuegt. Spec §7 Schritt 5 verlangt ausdruecklich, dass
+  # nicht blind beim ersten Beruehren gekauft wird - deshalb ist danach noch
+  # die MSS-Bestaetigung Pflicht.
+  retracement_min_fill: 0.0
+
+  # Ungueltigkeitsregeln.
+  invalidate_beyond_sweep: true   # Kurs faellt unter das Sweep-Tief -> Setup tot
+  invalidate_on_bias_flip: true   # HTF-Richtung dreht -> Setup tot
+  max_active_setups: 4
+
+# ----------------------------------------------------------------- Stop Loss
+# Spec §11: kein willkuerlicher Abstand. Anker ist das Extrem des Sweeps -
+# also genau der Punkt, den der Markt getestet und abgelehnt hat. Darunter
+# kommt ein Puffer, damit normales Rauschen den Stop nicht abholt.
+stops:
+  anchor: sweep                   # sweep | swing | fvg
+  buffer_atr_mult: 0.25
+  buffer_min_ticks: 4
+  min_stop_ticks: 8               # darunter ist der Stop im Rauschen
+  max_stop_ticks: 240             # darueber ist das Setup zu weit -> ablehnen
+
+# --------------------------------------------------------------- Take Profit
+# Spec §12: kein fester Dollarbetrag. Ziel ist die naechste unberuehrte
+# Liquiditaet in Handelsrichtung - dorthin wird der Kurs gezogen.
+targets:
+  mode: liquidity                 # liquidity | r_multiple
+  max_candidates: 6               # so viele Level werden nach oben durchsucht
+  fallback_r_multiple: 3.0        # wenn gar keine Liquiditaet gefunden wird
+  require_untapped: true
+
+# ------------------------------------------------------------ Handelsfenster
+# Spec §13: Der Bot ueberwacht rund um die Uhr, handelt aber nur unter
+# passenden Bedingungen. Eine erreichte Uhrzeit ist ausdruecklich KEIN Grund
+# fuer einen Trade - dies sind reine Filter, keine Ausloeser.
+trading_windows:
+  enabled: true
+  sessions: ["london", "ny_am", "ny_pm"]
+  min_atr_ticks: 8                # zu ruhig: Ziele werden nicht erreicht
+  max_atr_ticks: 400              # zu wild: Stops werden zu Zufall
+
+# ============================================================================
+#  RISIKO (Phase 3) - Spec §10
+# ============================================================================
+#  Bewusst sehr konservativ voreingestellt. Die Positionsgroesse wird immer
+#  aus Kontogroesse, Risiko pro Trade und Stopabstand berechnet - nie gesetzt.
+# ============================================================================
+
+risk:
+  enabled: true
   account_size: 10000.0
-  risk_per_trade_pct: 0.25
+  risk_per_trade_pct: 0.25        # 25 USD bei 10.000 USD Konto
   max_daily_loss_pct: 1.0
   max_trades_per_day: 3
   max_open_positions: 1
-  min_rr: 2.0
+  min_rr: 2.0                     # Spec §12: schlechtes CRV wird abgelehnt
   max_spread_ticks: 2
   max_slippage_ticks: 2
+  max_position_size: 5            # harte Obergrenze (Spec §24)
+
+# ============================================================================
+#  Ab hier: Platzhalter fuer spaetere Phasen. Bewusst schon dokumentiert,
+#  damit die Werte nie im Code landen.
+# ============================================================================
 
 execution:       # Phase 5/8/9 - Spec §18
   mode: analysis_only         # analysis_only | paper_manual | paper_auto

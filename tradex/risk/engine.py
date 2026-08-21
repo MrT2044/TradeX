@@ -1,0 +1,187 @@
+"""Risk Engine - die letzte Instanz vor einem Trade (Spec §10, §24).
+
+Reihenfolge der Pruefungen ist bewusst gewaehlt: erst die harten Sperren
+(Tagesverlust, Trade-Anzahl, offene Positionen), dann Marktbedingungen
+(Handelsfenster, Volatilitaet, Spread), zuletzt die Positionsgroesse. So steht
+im Protokoll immer der ERSTE und damit wichtigste Ablehnungsgrund vorn - bei
+erreichtem Tagesverlustlimit ist es unerheblich, ob das CRV gepasst haette.
+
+Die Risk Engine kann nur ablehnen, nie etwas erlauben, was die Strategie nicht
+vorgesehen hat. Sie ist ein Filter, kein Ausloeser.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from tradex.analysis import reasons
+from tradex.config import Config
+from tradex.domain.enums import SessionName
+from tradex.domain.instruments import Instrument
+from tradex.persistence.models import Reason
+from tradex.risk.ledger import RiskLedger
+from tradex.risk.sizing import PositionSize, calculate_position_size
+
+
+@dataclass(frozen=True, slots=True)
+class RiskAssessment:
+    """Ergebnis der Risikopruefung."""
+
+    approved: bool
+    position: PositionSize | None
+    reasons: tuple[Reason, ...]
+
+    @property
+    def blocking_reason(self) -> str:
+        for reason in self.reasons:
+            if not reason.ok:
+                return reason.code
+        return ""
+
+
+class RiskEngine:
+    """Prueft ein fertiges Setup gegen alle Risikogrenzen."""
+
+    def __init__(self, config: Config, instrument: Instrument, ledger: RiskLedger | None = None) -> None:
+        self.config = config
+        self.instrument = instrument
+        self.ledger = ledger or RiskLedger()
+
+    # --------------------------------------------------------------- Marktfilter
+    def check_trading_window(self, session: str, atr: float) -> list[Reason]:
+        """Spec §13: Filter fuer Marktbedingungen - ausdruecklich kein Ausloeser."""
+        params = self.config.trading_windows
+        if not params.enabled:
+            return [Reason(reasons.WINDOW_OK, True, {"enabled": False})]
+
+        collected: list[Reason] = []
+
+        allowed = {s.value for s in params.sessions}
+        session_ok = session in allowed
+        collected.append(
+            Reason(
+                reasons.WINDOW_SESSION_BLOCKED if not session_ok else reasons.WINDOW_OK,
+                session_ok,
+                {"session": session, "allowed": sorted(allowed)},
+            )
+        )
+
+        if np.isfinite(atr):
+            atr_ticks = self.instrument.to_ticks(atr)
+            if atr_ticks < params.min_atr_ticks:
+                collected.append(
+                    Reason(
+                        reasons.WINDOW_VOLATILITY_LOW,
+                        False,
+                        {"atr_ticks": round(atr_ticks, 1), "min": params.min_atr_ticks},
+                    )
+                )
+            elif atr_ticks > params.max_atr_ticks:
+                collected.append(
+                    Reason(
+                        reasons.WINDOW_VOLATILITY_HIGH,
+                        False,
+                        {"atr_ticks": round(atr_ticks, 1), "max": params.max_atr_ticks},
+                    )
+                )
+        return collected
+
+    # ------------------------------------------------------------------ Grenzen
+    def check_limits(self, trading_day: int) -> list[Reason]:
+        params = self.config.risk
+        if not params.enabled:
+            return [Reason(reasons.RISK_DISABLED, True, {})]
+
+        day = self.ledger.day(trading_day)
+        collected: list[Reason] = []
+
+        loss = day.realized_loss
+        limit = params.max_daily_loss_amount
+        within_loss = loss < limit
+        collected.append(
+            Reason(
+                reasons.RISK_DAILY_LOSS_LIMIT,
+                within_loss,
+                {"realized_loss": round(loss, 2), "limit": round(limit, 2)},
+            )
+        )
+
+        within_trades = day.trades_taken < params.max_trades_per_day
+        collected.append(
+            Reason(
+                reasons.RISK_MAX_TRADES,
+                within_trades,
+                {"taken": day.trades_taken, "limit": params.max_trades_per_day},
+            )
+        )
+
+        within_positions = self.ledger.open_count < params.max_open_positions
+        collected.append(
+            Reason(
+                reasons.RISK_MAX_POSITIONS,
+                within_positions,
+                {"open": self.ledger.open_count, "limit": params.max_open_positions},
+            )
+        )
+        return collected
+
+    # ----------------------------------------------------------------- Gesamturteil
+    def evaluate(
+        self,
+        stop_distance_points: float,
+        session: str,
+        atr: float,
+        trading_day: int,
+    ) -> RiskAssessment:
+        collected: list[Reason] = []
+
+        collected.extend(self.check_limits(trading_day))
+        if any(not r.ok for r in collected):
+            return RiskAssessment(False, None, tuple(collected))
+
+        collected.extend(self.check_trading_window(session, atr))
+        if any(not r.ok for r in collected):
+            return RiskAssessment(False, None, tuple(collected))
+
+        position = calculate_position_size(stop_distance_points, self.instrument, self.config.risk)
+        if not position.ok:
+            collected.append(
+                Reason(
+                    reasons.RISK_SIZE_ZERO,
+                    False,
+                    {
+                        "risk_budget": round(position.risk_budget, 2),
+                        "risk_per_contract": round(position.risk_per_contract, 2),
+                        "stop_ticks": round(self.instrument.to_ticks(stop_distance_points), 1),
+                    },
+                )
+            )
+            return RiskAssessment(False, position, tuple(collected))
+
+        collected.append(
+            Reason(
+                reasons.RISK_SIZE_OK,
+                True,
+                {
+                    "quantity": position.quantity,
+                    "risk_amount": round(position.risk_amount, 2),
+                    "risk_budget": round(position.risk_budget, 2),
+                },
+            )
+        )
+        if position.capped:
+            collected.append(
+                Reason(
+                    reasons.RISK_SIZE_CAPPED,
+                    True,
+                    {"quantity": position.quantity, "cap": self.config.risk.max_position_size},
+                )
+            )
+
+        return RiskAssessment(True, position, tuple(collected))
+
+
+def session_is_tradeable(session: str) -> bool:
+    return session != SessionName.CLOSED.value

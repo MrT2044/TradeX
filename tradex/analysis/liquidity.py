@@ -91,6 +91,14 @@ class Sweep:
     reclaim_ts: int
     depth_ticks: float
     bars_to_reclaim: int
+    extreme_price: float = 0.0
+    """Tiefster (bullish) bzw. hoechster (bearish) Kurs waehrend des Durchstichs.
+
+    Das ist der Punkt, den der Markt tatsaechlich getestet hat - und damit der
+    natuerliche Anker fuer den Stop Loss (Spec §11). Er wird mitgefuehrt statt
+    aus `pool_price` und `depth_ticks` zurueckgerechnet, damit kein
+    Rundungsfehler in die Risikoberechnung wandert.
+    """
 
 
 @dataclass(slots=True)
@@ -448,6 +456,7 @@ class LiquidityTracker:
                         reclaim_ts=int(series.ts[index]),
                         depth_ticks=depth / self.tick_size,
                         bars_to_reclaim=elapsed,
+                        extreme_price=pending.extreme_price,
                     )
                 )
                 del self._pending[pool_id]
@@ -502,6 +511,7 @@ class LiquidityTracker:
                     reclaim_ts=int(series.ts[index]),
                     depth_ticks=depth / self.tick_size,
                     bars_to_reclaim=0,
+                    extreme_price=pending.extreme_price,
                 )
             )
             del self._pending[pool_id]

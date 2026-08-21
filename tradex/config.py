@@ -182,8 +182,73 @@ class AnalysisConfig(_Frozen):
     bias: BiasParams
 
 
-# ------------------------------------------------- Platzhalter spaetere Phasen
+# --------------------------------------------------------- Strategie (Phase 3)
+class StrategyConfig(_Frozen):
+    """Spec §6-§9: die Pflichtkette und ihre Zeitfenster."""
+
+    enabled: bool = True
+    setup_timeframe: Timeframe = Timeframe.M5
+    confirmation_timeframe: Timeframe = Timeframe.M1
+    sweep_max_age_bars: int = Field(default=20, ge=1)
+    displacement_max_age_bars: int = Field(default=6, ge=1)
+    fvg_max_age_bars: int = Field(default=60, ge=1)
+    confirmation_max_age_bars: int = Field(default=20, ge=1)
+    retracement_min_fill: float = Field(default=0.0, ge=0, le=1)
+    invalidate_beyond_sweep: bool = True
+    invalidate_on_bias_flip: bool = True
+    max_active_setups: int = Field(default=4, ge=1)
+
+
+class StopsConfig(_Frozen):
+    """Spec §11."""
+
+    anchor: Literal["sweep", "swing", "fvg"] = "sweep"
+    buffer_atr_mult: float = Field(default=0.25, ge=0)
+    buffer_min_ticks: float = Field(default=4, ge=0)
+    min_stop_ticks: float = Field(default=8, gt=0)
+    max_stop_ticks: float = Field(default=240, gt=0)
+
+    @model_validator(mode="after")
+    def _range_is_sane(self) -> StopsConfig:
+        if self.min_stop_ticks >= self.max_stop_ticks:
+            raise ValueError("stops.min_stop_ticks muss kleiner als max_stop_ticks sein")
+        return self
+
+
+class TargetsConfig(_Frozen):
+    """Spec §12."""
+
+    mode: Literal["liquidity", "r_multiple"] = "liquidity"
+    max_candidates: int = Field(default=6, ge=1)
+    fallback_r_multiple: float = Field(default=3.0, gt=0)
+    require_untapped: bool = True
+
+
+class TradingWindowsConfig(_Frozen):
+    """Spec §13: Filter, keine Ausloeser."""
+
+    enabled: bool = True
+    sessions: tuple[SessionName, ...] = ()
+    min_atr_ticks: float = Field(default=8, ge=0)
+    max_atr_ticks: float = Field(default=400, gt=0)
+
+    @field_validator("sessions", mode="before")
+    @classmethod
+    def _parse_sessions(cls, value: Any) -> Any:
+        if isinstance(value, list | tuple):
+            return tuple(SessionName(str(item)) for item in value)
+        return value
+
+    @model_validator(mode="after")
+    def _range_is_sane(self) -> TradingWindowsConfig:
+        if self.min_atr_ticks >= self.max_atr_ticks:
+            raise ValueError("trading_windows.min_atr_ticks muss kleiner als max_atr_ticks sein")
+        return self
+
+
 class RiskConfig(_Frozen):
+    """Spec §10. Positionsgroesse wird berechnet, nie gesetzt."""
+
     enabled: bool = False
     account_size: float = Field(default=10_000.0, gt=0)
     risk_per_trade_pct: float = Field(default=0.25, gt=0, le=100)
@@ -193,6 +258,15 @@ class RiskConfig(_Frozen):
     min_rr: float = Field(default=2.0, gt=0)
     max_spread_ticks: float = Field(default=2, ge=0)
     max_slippage_ticks: float = Field(default=2, ge=0)
+    max_position_size: int = Field(default=5, ge=1)
+
+    @property
+    def risk_per_trade_amount(self) -> float:
+        return self.account_size * self.risk_per_trade_pct / 100.0
+
+    @property
+    def max_daily_loss_amount(self) -> float:
+        return self.account_size * self.max_daily_loss_pct / 100.0
 
 
 class ExecutionConfig(_Frozen):
@@ -220,9 +294,38 @@ class Config(_Frozen):
     data: DataConfig
     timeframes: TimeframesConfig
     analysis: AnalysisConfig
+    strategy: StrategyConfig = StrategyConfig()
+    stops: StopsConfig = StopsConfig()
+    targets: TargetsConfig = TargetsConfig()
+    trading_windows: TradingWindowsConfig = TradingWindowsConfig()
     risk: RiskConfig = RiskConfig()
     execution: ExecutionConfig = ExecutionConfig()
     news: NewsConfig = NewsConfig()
+
+    @model_validator(mode="after")
+    def _strategy_timeframes_are_configured(self) -> Config:
+        """Setup- und Confirmation-Timeframe muessen tatsaechlich analysiert werden.
+
+        Sonst liefe die Strategie gegen eine Ebene, fuer die es gar keine
+        Detektoren gibt - und faende schlicht nie ein Setup.
+        """
+        available = set(self.timeframes.all)
+        for label, timeframe in (
+            ("strategy.setup_timeframe", self.strategy.setup_timeframe),
+            ("strategy.confirmation_timeframe", self.strategy.confirmation_timeframe),
+        ):
+            if timeframe not in available:
+                configured = ", ".join(tf.value for tf in self.timeframes.all)
+                raise ValueError(
+                    f"{label}={timeframe.value} ist in `timeframes` nicht enthalten "
+                    f"(konfiguriert: {configured})"
+                )
+        if self.strategy.confirmation_timeframe.seconds > self.strategy.setup_timeframe.seconds:
+            raise ValueError(
+                "strategy.confirmation_timeframe muss kleiner oder gleich "
+                "setup_timeframe sein - die Bestaetigung ist die feinere Ebene"
+            )
+        return self
 
     @model_validator(mode="after")
     def _base_timeframe_is_smallest(self) -> Config:
