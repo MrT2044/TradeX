@@ -107,6 +107,9 @@ class RiskLedger:
     def is_open(self, setup_id: int) -> bool:
         return setup_id in self._open
 
+    def position(self, setup_id: int) -> OpenPosition | None:
+        return self._open.get(setup_id)
+
     # ---------------------------------------------------------------- Buchungen
     def open_position(self, position: OpenPosition, trading_day: int) -> None:
         if position.setup_id in self._open:
@@ -115,6 +118,20 @@ class RiskLedger:
             raise ValueError(f"Setup {position.setup_id} hat bereits eine offene Position")
         self._open[position.setup_id] = position
         self.day(trading_day).trades_taken += 1
+
+    def cancel_position(self, setup_id: int, trading_day: int) -> None:
+        """Eine gebuchte, aber nie gefuellte Order zuruecknehmen.
+
+        Der Backtest bucht die Position bereits beim Signal, damit die Grenzen
+        (offene Positionen, Trades pro Tag) sofort greifen - sonst koennte
+        zwischen Signal und Fuellung ein zweites Signal dieselbe freie Stelle
+        belegen. Wird die Order nie gefuellt, weil die Daten enden, darf sie
+        auch nicht als genommener Trade zaehlen.
+        """
+        if self._open.pop(setup_id, None) is None:
+            raise ValueError(f"Setup {setup_id} hat keine offene Position")
+        state = self.day(trading_day)
+        state.trades_taken = max(0, state.trades_taken - 1)
 
     def close_position(self, setup_id: int, exit_ts: int, pnl: float, trading_day: int) -> ClosedTrade:
         position = self._open.pop(setup_id, None)

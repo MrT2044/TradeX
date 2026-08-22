@@ -20,6 +20,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from tradex.analysis.context import ContextSnapshot, MarketContext, TimeframeUpdate
+from tradex.backtest.report import BacktestReport
+from tradex.backtest.report import build as build_report
+from tradex.backtest.runner import run_backtest
+from tradex.backtest.store import BacktestStore
 from tradex.config import Config, get_instrument, get_instruments
 from tradex.data.integrity import IntegrityReport, check
 from tradex.data.provider import MarketDataProvider, ProviderRegistry
@@ -48,6 +52,11 @@ MAX_LOAD_BARS = 400_000
 #: Protokolleintrag, damit spaeter nachvollziehbar bleibt, nach welchen Regeln
 #: eine Entscheidung fiel.
 STRATEGY_VERSION = "phase3-strategy-v1"
+
+#: Obergrenze fuer einen Backtest aus dem UI heraus. Der Lauf blockiert die
+#: Antwort; ueber mehrere Jahre 1m-Daten waere das Fenster minutenlang taub.
+#: Fuer lange Zeitraeume gibt es `scripts/run_backtest.py`.
+MAX_BACKTEST_BARS = 1_500_000
 
 
 @dataclass
@@ -84,7 +93,9 @@ class TradexService:
         self.database = config.path(config.data.database)
         init_database(self.database)
         self.decision_log = DecisionLog(self.database)
+        self.backtest_store = BacktestStore(self.database)
         self.config_hash = self.decision_log.register_config(self.config_path)
+        self._backtests: dict[str, BacktestReport] = {}
 
         self.providers = ProviderRegistry()
         self.providers.register(ReplayProvider(self.store))
@@ -99,6 +110,7 @@ class TradexService:
 
     def close(self) -> None:
         self.decision_log.close()
+        self.backtest_store.close()
 
     # -------------------------------------------------------------- Stammdaten
     def instruments(self) -> dict[str, Instrument]:
@@ -280,6 +292,65 @@ class TradexService:
 
     def signals(self, symbol: str, limit: int = 50) -> list[TradeSignal]:
         return self.state(symbol).strategy.signals[-limit:]
+
+    # ------------------------------------------------------------- Backtest
+    def backtest(
+        self,
+        symbol: str,
+        start_ts: int | None = None,
+        end_ts: int | None = None,
+        max_bars: int = MAX_BACKTEST_BARS,
+        save: bool = True,
+    ) -> BacktestReport:
+        """Einen Backtest ueber den lokalen Datenbestand rechnen (Spec §19).
+
+        Bewusst UNABHAENGIG vom Replay-Zustand: der Lauf baut einen eigenen
+        `MarketContext` auf und laesst den geladenen Zustand des Symbols
+        unberuehrt. Sonst haette es einen Unterschied gemacht, wie weit man vor
+        dem Start des Backtests im Chart vorgespult hatte - und das Ergebnis
+        waere nicht reproduzierbar.
+
+        Die Einzelentscheidungen gehen NICHT ins Entscheidungsprotokoll: ueber
+        mehrere Jahre kaemen Millionen Zeilen zusammen und wuerden die
+        Live-Historie unbrauchbar machen. Festgehalten wird der Lauf als Ganzes
+        (`backtest_runs`) samt seinen Trades - mit `config_hash`, ohne den zwei
+        Ergebnisse nicht vergleichbar waeren, sondern nur zwei Zahlen.
+        """
+        symbol = symbol.upper()
+        instrument = get_instrument(symbol)
+        base_timeframe = self.config.data.base_timeframe
+
+        series = self.store.read(symbol, base_timeframe, start_ts, end_ts, limit=max_bars)
+        if len(series) == 0:
+            raise LookupError(
+                f"Keine {base_timeframe.value}-Daten fuer {symbol} im lokalen Speicher."
+            )
+
+        result = run_backtest(symbol, instrument, self.config, series)
+        report = build_report(result, self.config)
+        self._backtests[symbol] = report
+
+        if save:
+            run_id = self.backtest_store.record(report, self.config_hash, STRATEGY_VERSION)
+            log.info(
+                "backtest_recorded",
+                run_id=run_id,
+                symbol=symbol,
+                trades=report.overall.trades,
+                expectancy_r=round(report.overall.expectancy_r, 3),
+            )
+        return report
+
+    def last_backtest(self, symbol: str) -> BacktestReport:
+        try:
+            return self._backtests[symbol.upper()]
+        except KeyError as exc:
+            raise LookupError(
+                f"Fuer {symbol.upper()} wurde in dieser Sitzung noch kein Backtest gerechnet."
+            ) from exc
+
+    def backtest_runs(self, symbol: str | None = None, limit: int = 20) -> list[dict[str, object]]:
+        return self.backtest_store.runs(limit=limit, symbol=symbol)
 
     # ------------------------------------------------------------- Protokoll
     def record_analysis(self, symbol: str) -> int:

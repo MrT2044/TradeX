@@ -89,7 +89,15 @@ class RiskEngine:
         return collected
 
     # ------------------------------------------------------------------ Grenzen
-    def check_limits(self, trading_day: int) -> list[Reason]:
+    def check_limits(self, trading_day: int, pending: int = 0) -> list[Reason]:
+        """Harte Sperren pruefen.
+
+        `pending` sind Trades, die auf DERSELBEN Bar bereits genehmigt wurden,
+        aber noch in keinem Buch stehen. Ohne sie waere `max_open_positions`
+        wirkungslos, sobald mehrere Setups gleichzeitig bestaetigen: alle
+        saehen dieselbe leere Position und kaemen alle durch (Spec §24,
+        Duplicate Order Protection).
+        """
         params = self.config.risk
         if not params.enabled:
             return [Reason(reasons.RISK_DISABLED, True, {})]
@@ -108,21 +116,23 @@ class RiskEngine:
             )
         )
 
-        within_trades = day.trades_taken < params.max_trades_per_day
+        taken = day.trades_taken + pending
+        within_trades = taken < params.max_trades_per_day
         collected.append(
             Reason(
                 reasons.RISK_MAX_TRADES,
                 within_trades,
-                {"taken": day.trades_taken, "limit": params.max_trades_per_day},
+                {"taken": taken, "limit": params.max_trades_per_day, "pending": pending},
             )
         )
 
-        within_positions = self.ledger.open_count < params.max_open_positions
+        open_count = self.ledger.open_count + pending
+        within_positions = open_count < params.max_open_positions
         collected.append(
             Reason(
                 reasons.RISK_MAX_POSITIONS,
                 within_positions,
-                {"open": self.ledger.open_count, "limit": params.max_open_positions},
+                {"open": open_count, "limit": params.max_open_positions, "pending": pending},
             )
         )
         return collected
@@ -134,10 +144,11 @@ class RiskEngine:
         session: str,
         atr: float,
         trading_day: int,
+        pending: int = 0,
     ) -> RiskAssessment:
         collected: list[Reason] = []
 
-        collected.extend(self.check_limits(trading_day))
+        collected.extend(self.check_limits(trading_day, pending))
         if any(not r.ok for r in collected):
             return RiskAssessment(False, None, tuple(collected))
 

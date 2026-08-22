@@ -314,6 +314,134 @@ export interface StrategyDecision {
   signal: TradeSignal | null;
 }
 
+// ------------------------------------------------------------- Backtest (Ph. 4)
+export type ExitReason = 'stop' | 'target' | 'time' | 'end_of_data';
+
+/**
+ * `profit_factor`, `payoff_ratio` und `sqn` sind null, wenn sie sich aus der
+ * Stichprobe nicht bestimmen lassen - etwa ohne einen einzigen Verlusttrade.
+ * Das ist NICHT dasselbe wie 0 und darf im UI auch nicht so aussehen.
+ */
+export interface Metrics {
+  trades: number;
+  wins: number;
+  losses: number;
+  scratches: number;
+  win_rate: number;
+  gross_profit: number;
+  gross_loss: number;
+  commission: number;
+  net_pnl: number;
+  profit_factor: number | null;
+  expectancy_r: number;
+  expectancy_usd: number;
+  avg_win_r: number;
+  avg_loss_r: number;
+  payoff_ratio: number | null;
+  best_r: number;
+  worst_r: number;
+  stdev_r: number;
+  sqn: number | null;
+  max_drawdown_usd: number;
+  max_drawdown_pct: number;
+  max_drawdown_r: number;
+  max_consecutive_wins: number;
+  max_consecutive_losses: number;
+  avg_bars_held: number;
+  avg_mae_r: number;
+  avg_mfe_r: number;
+  avg_planned_rr: number;
+  start_equity: number;
+  final_equity: number;
+  return_pct: number;
+  first_ts: number;
+  last_ts: number;
+  unresolved: number;
+}
+
+export interface EquityPoint {
+  ts: number;
+  trade_number: number;
+  equity: number;
+  drawdown: number;
+}
+
+export interface SimulatedTrade {
+  setup_id: number;
+  side: 'LONG' | 'SHORT';
+  session: string;
+  quantity: number;
+  planned_entry: number;
+  entry_price: number;
+  exit_price: number;
+  stop: number;
+  target: number;
+  planned_rr: number;
+  entry_ts: number;
+  exit_ts: number;
+  bars_held: number;
+  exit_reason: ExitReason;
+  pnl: number;
+  commission: number;
+  r_multiple: number;
+  mae_r: number;
+  mfe_r: number;
+  stop_anchor: string;
+  target_source: string;
+  htf_bias: BiasValue | '';
+}
+
+export interface BacktestReport {
+  symbol: string;
+  instrument_name: string;
+  base_timeframe: string;
+  bars: number;
+  first_ts: number;
+  last_ts: number;
+  backtest_version: string;
+  /** Was der Leser wissen muss, BEVOR er die Zahlen deutet. */
+  warnings: string[];
+  is_significant: boolean;
+  min_trades: number;
+  overall: Metrics;
+  in_sample: Metrics;
+  out_of_sample: Metrics;
+  by_session: Record<string, Metrics>;
+  by_direction: Record<string, Metrics>;
+  by_exit: Record<string, Metrics>;
+  by_stop_anchor: Record<string, Metrics>;
+  by_target_source: Record<string, Metrics>;
+  exit_counts: Record<string, number>;
+  rejections: Record<string, number>;
+  signals: number;
+  unfilled: number;
+  trades_total: number;
+  equity: EquityPoint[];
+  trades: SimulatedTrade[];
+  assumptions: Record<string, unknown>;
+}
+
+export interface BacktestRun {
+  id: number;
+  ts_utc: string;
+  symbol: string;
+  base_timeframe: string;
+  first_ts: number;
+  last_ts: number;
+  bars: number;
+  config_hash: string;
+  strategy_version: string;
+  backtest_version: string;
+  trades: number;
+  wins: number;
+  losses: number;
+  net_pnl: number;
+  expectancy_r: number;
+  profit_factor: number | null;
+  max_drawdown_pct: number;
+  notes: string;
+}
+
 export interface StrategyState {
   symbol: string;
   enabled: boolean;

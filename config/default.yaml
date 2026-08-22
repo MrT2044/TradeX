@@ -232,6 +232,45 @@ risk:
   max_position_size: 5            # harte Obergrenze (Spec §24)
 
 # ============================================================================
+#  BACKTEST (Phase 4) - Spec §19
+# ============================================================================
+#  Diese Werte entscheiden, wie ehrlich das Ergebnis ist. Sie sind bewusst
+#  pessimistisch: ein Backtest, der guenstiger fuellt als die Wirklichkeit,
+#  liefert genau die Zahlen, die man sehen will - und damit keine.
+#
+#  Die Analyse selbst laeuft ueber denselben Pfad wie Replay und spaeter Live
+#  (`MarketContext.on_base_bar`). Der Backtest fuegt AUSSCHLIESSLICH die
+#  Ausfuehrung hinzu, nie eine zweite Regelauslegung.
+# ============================================================================
+
+backtest:
+  # Das Signal entsteht am SCHLUSS der Bestaetigungsbar. Zu diesem Kurs kann
+  # man real nicht mehr kaufen - gefuellt wird auf der naechsten Bar.
+  entry_fill: next_bar_open       # next_bar_open | signal_close
+
+  # Liegen Stop UND Ziel in derselben Bar, sagen OHLC-Daten nicht, was zuerst
+  # kam. Angenommen wird der schlechtere Fall.
+  same_bar_resolution: stop_first  # stop_first | target_first
+
+  entry_slippage_ticks: 1.0
+  stop_slippage_ticks: 1.0        # Stop = Market-Order, rutscht.
+                                  # Ziel = Limit-Order: fuellt zum Kurs oder gar nicht.
+  commission_per_contract: 0.74   # USD je Kontrakt und Round Turn
+
+  max_holding_bars: 480           # Zeitstop in Basis-Bars (0 = aus)
+
+  # Unter dieser Trade-Anzahl weist der Bericht seine Kennzahlen ausdruecklich
+  # als nicht belastbar aus.
+  min_trades_for_significance: 30
+
+  # Der letzte Teil des Zeitraums wird getrennt ausgewertet. Weichen die beiden
+  # Abschnitte stark voneinander ab, ist das Ergebnis an den Zeitraum angepasst
+  # und nicht an den Markt.
+  out_of_sample_fraction: 0.3
+
+  max_report_trades: 500          # Obergrenze fuer Trades/Equity je Bericht
+
+# ============================================================================
 #  Ab hier: Platzhalter fuer spaetere Phasen. Bewusst schon dokumentiert,
 #  damit die Werte nie im Code landen.
 # ============================================================================

@@ -3,10 +3,10 @@
 Regelbasiertes, backtestbares Analyse- und (später) Handelssystem für
 Nasdaq-100-Futures (MNQ/NQ).
 
-**Aktueller Stand: Phase 1–3 — Analyse, Strategie und Risikosteuerung.**
+**Aktueller Stand: Phase 1–4 — Analyse, Strategie, Risiko und Backtest.**
 Setups werden erkannt, Einstieg, Stop, Ziel und Positionsgröße werden
-durchgerechnet und protokolliert. **Es werden keine Orders ausgeführt** — das
-kommt ab Phase 5. Einen Backtest gibt es noch nicht (Phase 4).
+durchgerechnet, protokolliert und über die Historie ausgewertet. **Es werden
+keine Orders ausgeführt** — das kommt ab Phase 5.
 
 ---
 
@@ -110,6 +110,11 @@ Spezifikation: [`bridge_nt8/README.md`](bridge_nt8/README.md).
                                   │
                      MarketContext ── der EINZIGE Analysepfad
                                   │
+                  tradex/strategy/ ── Pflichtkette, Stop, Ziel
+                  tradex/risk/     ── Größe, Grenzen, Konsistenz
+                                  │
+                  tradex/backtest/ ── Ausführungssimulation und Statistik
+                                  │
                      tradex/api/   ── FastAPI + DTOs (einziger UI-Vertrag)
                                   │
                             ui/    ── React + lightweight-charts
@@ -195,6 +200,61 @@ stillschweigend jedes Setup mit „Positionsgröße 0" zu verwerfen. Sie **ände
 keine Werte** — ob kleineres Risiko, größeres Konto oder engerer Stop, ist deine
 Entscheidung.
 
+## Der Backtest (Phase 4)
+
+Die Frage, für die dieses Projekt gebaut wurde: **Hat die Pflichtkette einen
+Edge — oder nicht?**
+
+```bash
+python scripts/run_backtest.py --symbol MNQ_PROXY --from 2023-01-01 --save
+```
+
+Der Backtest benutzt denselben Analysepfad wie Replay und später Live
+(`MarketContext.on_base_bar`). Er fügt **ausschließlich die Ausführung** hinzu,
+nie eine zweite Regelauslegung — ein Test stellt beide Wege gegenüber und
+verlangt identische Entscheidungen. Das ist Spec §29 in ausführbarer Form.
+
+### Die vier Annahmen, an denen ein Backtest lügen kann
+
+Alle vier stehen in `config/default.yaml` unter `backtest:` und sind bewusst
+pessimistisch voreingestellt. Ein Backtest, der günstiger füllt als die
+Wirklichkeit, produziert genau die Zahlen, die man sehen will.
+
+| Annahme | Voreinstellung | Warum |
+|---|---|---|
+| **Einstiegskurs** | Eröffnung der Folgebar + 1 Tick Schlupf | Das Signal entsteht am *Schluss* der Bestätigungsbar. Zu diesem Kurs kann man real nicht mehr kaufen. |
+| **Stop und Ziel in derselben Bar** | `stop_first` | OHLC sagt nicht, was zuerst kam. Angenommen wird der schlechtere Fall. |
+| **Kurssprung über den Stop** | Füllung am Eröffnungskurs | Eröffnet die Bar jenseits des Stops, gibt es den Stopkurs nicht mehr. |
+| **Schlupf** | Stop 1 Tick, Ziel 0 | Der Stop ist eine Market-Order und rutscht. Das Ziel ist eine Limit-Order: sie füllt zum Kurs oder gar nicht. |
+
+Dazu Gebühren (0,74 $ je Kontrakt und Round Turn) und ein Zeitstop. Alle
+Ergebnisse sind **netto** — auch das R-Vielfache. Eine Statistik, die Kosten
+ausklammert, beschreibt einen Handel, den es nicht gibt.
+
+### Was der Bericht sagt, bevor er Zahlen zeigt
+
+Ein Erwartungswert aus zwölf Trades sieht genauso aus wie einer aus
+zwölfhundert. Deshalb steht ganz oben, was man wissen muss, *bevor* man die
+Zahlen liest: zu kleine Stichprobe, synthetische Daten, Index-CFD statt Future,
+Trades die nur das Datenende beendet hat — und ob erste und zweite Hälfte des
+Zeitraums überhaupt zueinander passen. Tun sie es nicht, hängt das Ergebnis am
+Zeitraum und nicht an der Regel.
+
+Gerechnet wird in **R** (Vielfaches des eingegangenen Risikos), nicht in Dollar:
+ein Dollarergebnis hängt an Kontogröße, Stopweite und Stückzahl — drei Größen,
+die mit der Regel nichts zu tun haben.
+
+Jeder Lauf lässt sich mit `--save` festhalten. Gespeichert werden Kennzahlen,
+Einzeltrades **und** der `config_hash` — ohne den wären zwei Ergebnisse nicht
+vergleichbar, sondern nur zwei Zahlen (Spec §21).
+
+### Was hier bewusst nicht passiert
+
+**Keine Parameteroptimierung.** Ein Suchlauf über Schwellenwerte findet
+zuverlässig eine Kombination, die auf der Vergangenheit gut aussieht, und sagt
+nichts über die Zukunft. Der Backtest beantwortet eine Ja/Nein-Frage zu *einer*
+festgelegten Regelfassung.
+
 ---
 
 Zwei Entscheidungen, die eine Begründung verdienen:
@@ -210,6 +270,12 @@ Zwei Entscheidungen, die eine Begründung verdienen:
 
 ## Bedienung
 
+Unter Windows genügt ein Doppelklick auf **`TradeX.bat`**. Die Datei prüft
+virtuelle Umgebung, Installation und Oberflächen-Build, baut das UI beim ersten
+Start selbst und öffnet dann das Fenster. Fehlt etwas, bleibt das Fenster offen
+und sagt, was zu tun ist. Argumente werden durchgereicht
+(`TradeX.bat --server`).
+
 ```bash
 python -m tradex.shell            # Desktop-Fenster (Edge WebView2)
 python -m tradex.shell --server   # nur die Engine, ohne Fenster
@@ -220,10 +286,14 @@ Detektor anspringt. Das ist der eigentliche Zweck dieser Phase: die
 Schwellenwerte gegen echte Kursverläufe prüfen, bevor eine Strategie darauf
 aufsetzt. Sie benutzt denselben Engine-Aufruf wie später der Live-Feed.
 
-Headless, mit Kennzahlen und einem einchreckbaren Regressions-Snapshot:
+Headless, mit Kennzahlen und einem eincheckbaren Regressions-Snapshot:
 
 ```bash
 python scripts/run_analysis.py --symbol MNQ --out snapshot.json
+```
+
+```bash
+python scripts/run_backtest.py --symbol MNQ_PROXY --out backtest.json --save
 ```
 
 ---
@@ -252,7 +322,7 @@ Parallel `python -m tradex.shell --server` laufen lassen.)
 | 1 | Architektur, Daten, Speicher, UI-Gerüst | **fertig** |
 | 2 | Multi-Timeframe-Analyse, alle Detektoren | **fertig** |
 | 3 | Strategy Engine, SL/TP, Risk Management | **fertig** |
-| 4 | Backtesting und Statistik (Spec §19) | offen |
+| 4 | Backtesting und Statistik (Spec §19) | **fertig** |
 | 5 | NinjaTrader Paper Trading | offen |
 | 6 | News- und KI-Kontextschicht | offen |
 | 7 | Dashboard, Kill Switch, Monitoring | offen |

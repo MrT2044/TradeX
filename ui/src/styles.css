@@ -979,3 +979,131 @@ pre {
 .app--empty {
   height: 100%;
 }
+
+/* ------------------------------------------------------------------ Backtest */
+/* Aufbau folgt der Leserichtung des Panels: erst Warnungen, dann Zahlen. */
+.panel__hint {
+  font-size: 11px;
+  margin: 0 0 8px;
+}
+
+.button {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 6px 12px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.button--primary {
+  width: 100%;
+  color: var(--accent);
+  border-color: rgba(91, 143, 214, 0.45);
+  margin-bottom: 10px;
+}
+
+.backtest__warnings {
+  margin-bottom: 10px;
+}
+.backtest__warnings ul {
+  margin: 5px 0 0;
+  padding-left: 16px;
+}
+.backtest__warnings li + li {
+  margin-top: 4px;
+}
+
+/* Zu kleine Stichprobe: die Zahlen bleiben lesbar, treten aber zurueck -
+   sie sind dann noch kein Befund. */
+.backtest--dimmed {
+  opacity: 0.72;
+}
+.backtest__caveat {
+  font-size: 11px;
+  margin: 0 0 6px;
+}
+
+.metrics {
+  margin: 8px 0 0;
+  font-size: 11.5px;
+}
+.metrics__row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 2px 0;
+  border-bottom: 1px solid rgba(36, 44, 56, 0.55);
+}
+.metrics__row dt {
+  color: var(--text-muted);
+}
+.metrics__row dd {
+  margin: 0;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.metrics--compact {
+  font-size: 10.5px;
+}
+
+.metrics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+.metrics-table th {
+  text-align: right;
+  font-weight: 500;
+  color: var(--text-muted);
+  font-size: 9.5px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding-bottom: 3px;
+}
+.metrics-table th:first-child,
+.metrics-table td:first-child {
+  text-align: left;
+}
+.metrics-table td {
+  text-align: right;
+  font-family: var(--font-mono);
+  padding: 2px 0;
+  border-top: 1px solid rgba(36, 44, 56, 0.55);
+}
+.positive {
+  color: var(--ok);
+}
+.negative {
+  color: var(--error);
+}
+.counter--bad .counter__value {
+  color: var(--error);
+}
+
+/* Kontoverlauf: es geht um die Form, nicht um ablesbare Einzelwerte.
+   Die Grundlinie ist das Startkapital. */
+.equity {
+  width: 100%;
+  height: 70px;
+  display: block;
+}
+.equity__base {
+  stroke: var(--border);
+  stroke-width: 1;
+  stroke-dasharray: 3 3;
+}
+.equity__line {
+  fill: none;
+  stroke: var(--error);
+  stroke-width: 1.5;
+}
+.equity__line--up {
+  stroke: var(--ok);
+}

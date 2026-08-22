@@ -2,6 +2,10 @@
 # Ohne das meldet Git bei jeder Datei eine CRLF-Umwandlung.
 * text=auto eol=lf
 
+# Batchdateien brauchen CRLF. cmd.exe verarbeitet reine LF-Dateien nur
+# teilweise korrekt - Labels und `goto` brechen dabei still.
+*.bat text eol=crlf
+
 # Binaerdateien nie anfassen.
 *.parquet binary
 *.db       binary

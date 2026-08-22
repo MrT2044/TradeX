@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { ApiError, api } from './api/client';
 import type {
+  BacktestReport,
   BarsResponse,
   ContextSnapshot,
   Coverage,
@@ -15,6 +16,7 @@ import type {
 import { TradeChart, type ChartToggles } from './chart/TradeChart';
 import { de } from './i18n/de';
 import { AnalysisPanel } from './panels/AnalysisPanel';
+import { BacktestPanel } from './panels/BacktestPanel';
 import { ReplayControls } from './panels/ReplayControls';
 import { StatusBar } from './panels/StatusBar';
 import { StrategyPanel } from './panels/StrategyPanel';
@@ -45,6 +47,8 @@ export default function App() {
   const [strategy, setStrategy] = useState<StrategyState | null>(null);
   const [integrity, setIntegrity] = useState<Integrity | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [backtest, setBacktest] = useState<BacktestReport | null>(null);
+  const [backtesting, setBacktesting] = useState(false);
 
   const [cursor, setCursor] = useState(0);
   const [total, setTotal] = useState(0);
@@ -124,6 +128,9 @@ export default function App() {
       setPlaying(false);
       setError(null);
       try {
+        // Ergebnis des vorigen Instruments verwerfen - sonst stuende beim
+        // Wechsel eine fremde Statistik unter dem neuen Symbol.
+        setBacktest(null);
         // feedAll=false: die Daten liegen bereit, die Analyse startet bei 0.
         // So kann man von Anfang an mitverfolgen, wann welcher Detektor anspringt.
         const loaded = await api.load(symbol, { feedAll: false });
@@ -225,6 +232,23 @@ export default function App() {
       setBusy(false);
     }
   }, [symbol, timeframe, refreshView]);
+
+  // --- Backtest -------------------------------------------------------------
+  const runBacktest = useCallback(async () => {
+    if (!symbol) return;
+    // Der Lauf rechnet synchron durch und blockiert die Antwort. Die
+    // Wiedergabe wird angehalten, damit nicht parallel Schritte hineinlaufen.
+    setPlaying(false);
+    setBacktesting(true);
+    setError(null);
+    try {
+      setBacktest(await api.backtest(symbol));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBacktesting(false);
+    }
+  }, [symbol]);
 
   // --- Keine Daten vorhanden ----------------------------------------------
   if (!error && symbols.length === 0 && health) {
@@ -340,6 +364,11 @@ export default function App() {
         <aside className="layout__side">
           <AnalysisPanel snapshot={snapshot} entryTimeframe={ENTRY_TIMEFRAME} />
           <StrategyPanel strategy={strategy} />
+          <BacktestPanel
+            report={backtest}
+            busy={backtesting || busy}
+            onRun={() => void runBacktest()}
+          />
           <SystemPanel health={health} integrity={integrity} logs={logs} />
         </aside>
       </main>

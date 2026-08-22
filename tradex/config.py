@@ -270,6 +270,50 @@ class RiskConfig(_Frozen):
         return self.account_size * self.max_daily_loss_pct / 100.0
 
 
+class BacktestConfig(_Frozen):
+    """Spec §19: die Ausfuehrungsannahmen des Backtests.
+
+    Sie sind bewusst pessimistisch gewaehlt. Ein Backtest, der guenstiger fuellt
+    als die Realitaet, produziert genau die Zahlen, die man sehen moechte - und
+    ist damit wertlos. Jede Annahme steht hier explizit, statt im Simulator
+    versteckt zu sein.
+    """
+
+    #: Wo der Einstieg gefuellt wird. Das Signal entsteht am SCHLUSS der
+    #: Bestaetigungsbar - zu diesem Kurs kann man real nicht mehr kaufen.
+    #: `next_bar_open` ist deshalb der ehrliche Fall; `signal_close` existiert
+    #: nur, um den Unterschied messen zu koennen.
+    entry_fill: Literal["next_bar_open", "signal_close"] = "next_bar_open"
+
+    #: Liegen Stop UND Ziel innerhalb derselben Bar, sagen OHLC-Daten nicht,
+    #: was zuerst kam. `stop_first` nimmt den schlechteren Fall an.
+    same_bar_resolution: Literal["stop_first", "target_first"] = "stop_first"
+
+    entry_slippage_ticks: float = Field(default=1.0, ge=0)
+    #: Der Stop ist eine Market-Order und rutscht. Das Ziel ist eine
+    #: Limit-Order: sie fuellt zum Kurs oder gar nicht - deshalb ohne Schlupf.
+    stop_slippage_ticks: float = Field(default=1.0, ge=0)
+    commission_per_contract: float = Field(default=0.74, ge=0)
+    """USD je Kontrakt und Round Turn (Ein- plus Ausstieg)."""
+
+    #: Zeitstop in Basis-Bars. 0 schaltet ihn ab. Ohne ihn koennen Positionen
+    #: ueber Tage offen bleiben, was zu einem Intraday-Modell nicht passt.
+    max_holding_bars: int = Field(default=480, ge=0)
+
+    #: Unterhalb dieser Trade-Anzahl weist der Bericht seine Kennzahlen als
+    #: nicht belastbar aus, statt sie kommentarlos zu zeigen.
+    min_trades_for_significance: int = Field(default=30, ge=1)
+
+    #: Anteil des Zeitraums am Ende, der getrennt ausgewertet wird. Stimmen
+    #: erster und zweiter Abschnitt nicht ueberein, ist das Ergebnis vermutlich
+    #: an den Zeitraum angepasst und nicht an den Markt.
+    out_of_sample_fraction: float = Field(default=0.3, ge=0, lt=1)
+
+    #: So viele Trades und Equity-Punkte gehen hoechstens in einen Bericht.
+    #: Schuetzt UI und JSON-Ausgabe vor Berichten mit Zehntausenden Zeilen.
+    max_report_trades: int = Field(default=500, ge=1)
+
+
 class ExecutionConfig(_Frozen):
     mode: TradingMode = TradingMode.ANALYSIS_ONLY
     live_trading_enabled: bool = False
@@ -300,6 +344,7 @@ class Config(_Frozen):
     targets: TargetsConfig = TargetsConfig()
     trading_windows: TradingWindowsConfig = TradingWindowsConfig()
     risk: RiskConfig = RiskConfig()
+    backtest: BacktestConfig = BacktestConfig()
     execution: ExecutionConfig = ExecutionConfig()
     news: NewsConfig = NewsConfig()
 

@@ -14,83 +14,19 @@ Zwei Arten von Pruefung:
 
 from __future__ import annotations
 
-from datetime import timedelta
-
-import numpy as np
 import pytest
 
-from tests.conftest import DEFAULT_START
+from tests.conftest import tradeable_config as _tradeable_config
+from tests.conftest import trending_market as _trending_market
 from tradex.analysis.context import MarketContext
-from tradex.config import Config, RiskConfig, StopsConfig, TradingWindowsConfig
-from tradex.domain.bars import BarSeries, to_ns
+from tradex.config import Config
+from tradex.domain.bars import BarSeries
 from tradex.domain.enums import Direction
 from tradex.domain.instruments import Instrument
 from tradex.strategy.engine import StrategyEngine
 from tradex.strategy.setup import SetupStage
 
 SYMBOL = "MNQ"
-
-
-def _tradeable_config(config: Config) -> Config:
-    """Konfiguration, unter der die Kette auch tatsaechlich zu Trades kommt.
-
-    Die Auslieferungswerte sind bewusst so eng, dass auf den vorliegenden Daten
-    fast nichts durchkommt. Fuer den Test des Erfolgsfalls wird das Konto
-    vergroessert und der erlaubte Stop an das Budget angeglichen - das sind
-    Testbedingungen, keine Strategieaenderung.
-    """
-    risk = RiskConfig(
-        **{
-            **config.risk.model_dump(),
-            "account_size": 100_000.0,
-            "risk_per_trade_pct": 0.5,
-            "max_trades_per_day": 50,
-            "max_open_positions": 50,
-            "min_rr": 1.2,
-        }
-    )
-    stops = StopsConfig(**{**config.stops.model_dump(), "max_stop_ticks": 400})
-    # Die synthetischen Daten haben keine Sessionstruktur - der Sessionfilter
-    # wuerde hier nur zufaellig aussortieren. Er wird in test_risk.py geprueft.
-    windows = TradingWindowsConfig(
-        **{**config.trading_windows.model_dump(), "enabled": False}
-    )
-    return Config(
-        **{
-            **config.model_dump(),
-            "risk": risk,
-            "stops": stops,
-            "trading_windows": windows,
-        }
-    )
-
-
-def _trending_market(minutes: int, seed: int = 3) -> BarSeries:
-    """Markt mit klarem Trend, Ruecksetzern und gelegentlichen Impulsen.
-
-    Ein Trend ist noetig, damit der HTF-Bias ueberhaupt eine Richtung annimmt -
-    ohne ihn entsteht per Spec §7 Schritt 1 gar kein Kandidat.
-    """
-    rng = np.random.default_rng(seed)
-    series = BarSeries()
-    price = 21000.0
-    for i in range(minutes):
-        # Laengere Aufwaertsphasen mit eingestreuten Ruecksetzern.
-        drift = 0.25 if (i // 900) % 3 != 2 else -0.20
-        shock = 9.0 if i % 260 == 0 else 1.6
-        close = price + drift + float(rng.normal(0, shock))
-        high = max(price, close) + abs(float(rng.normal(0, shock * 0.45)))
-        low = min(price, close) - abs(float(rng.normal(0, shock * 0.45)))
-        series.append(
-            to_ns(DEFAULT_START + timedelta(minutes=i)),
-            price,
-            high,
-            low,
-            close,
-            float(rng.integers(60, 900)),
-        )
-        price = close
-    return series
 
 
 def _run(config: Config, instrument: Instrument, series: BarSeries) -> StrategyEngine:

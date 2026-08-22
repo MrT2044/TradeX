@@ -15,6 +15,7 @@ from tradex.api.schemas import (
 )
 from tradex.api.state import get_service
 from tradex.logging_setup import get_ui_log_entries
+from tradex.service import STRATEGY_VERSION
 
 router = APIRouter(tags=["system"])
 
@@ -34,7 +35,11 @@ def health() -> HealthDto:
         live_trading_enabled=service.config.execution.live_trading_enabled,
         symbol=service.config.data.default_symbol,
         config_hash=service.config_hash,
-        strategy_version="phase2-analysis",
+        # Dieselbe Kennung, die in jedem Protokolleintrag und jedem
+        # gespeicherten Backtest-Lauf steht. Stuende hier ein anderer Wert,
+        # zeigte das Dashboard eine Regelfassung an, nach der nie entschieden
+        # wurde (Spec §21).
+        strategy_version=STRATEGY_VERSION,
         providers=providers,
         warnings=warnings,
     )

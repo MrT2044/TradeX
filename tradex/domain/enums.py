@@ -149,6 +149,21 @@ class ProviderStatus(StrEnum):
     ERROR = "error"
 
 
+class ExitReason(StrEnum):
+    """Wodurch eine simulierte Position beendet wurde (Phase 4, Spec §19).
+
+    END_OF_DATA ist ausdruecklich KEIN Ausstieg der Strategie, sondern ein
+    Artefakt des Auswertungsfensters: die Position lief noch, als die Daten
+    endeten. Solche Trades werden im Bericht getrennt ausgewiesen, weil ihr
+    Ergebnis nichts ueber die Regel aussagt.
+    """
+
+    STOP = "stop"
+    TARGET = "target"
+    TIME = "time"
+    END_OF_DATA = "end_of_data"
+
+
 class TradingMode(StrEnum):
     """Spec §18. In Phase 1+2 ist ausschliesslich ANALYSIS_ONLY erreichbar."""
 

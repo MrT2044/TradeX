@@ -70,6 +70,12 @@ class StrategyEngine:
         self.signals: list[TradeSignal] = []
         self._next_id = 1
         self._bias: Bias = Bias.NEUTRAL
+        self._approved_in_batch = 0
+        """Auf dieser Basis-Bar bereits genehmigte Trades.
+
+        Bestaetigen mehrere Setups gleichzeitig, sind sie noch in keinem
+        Risikobuch verzeichnet, wenn der naechste geprueft wird - alle saehen
+        dieselbe freie Position. Dieser Zaehler schliesst die Luecke."""
 
         self.setup_tf: Timeframe = config.strategy.setup_timeframe
         self.confirmation_tf: Timeframe = config.strategy.confirmation_timeframe
@@ -83,6 +89,7 @@ class StrategyEngine:
             return []
 
         self._bias = context.bias().bias
+        self._approved_in_batch = 0
         produced: list[StrategyDecision] = []
 
         for update in updates:
@@ -450,11 +457,14 @@ class StrategyEngine:
 
         # ---- Risiko (Spec §10, §13)
         session, trading_day, _ = context.resolver.resolve(bar.ts)
-        assessment = self.risk.evaluate(stop.distance_points, session, atr, trading_day)
+        assessment = self.risk.evaluate(
+            stop.distance_points, session, atr, trading_day, pending=self._approved_in_batch
+        )
         collected.extend(assessment.reasons)
         if not assessment.approved or assessment.position is None:
             return self._no_trade(candidate, bar.ts, index, self.confirmation_tf, collected)
 
+        self._approved_in_batch += 1
         position = assessment.position
         signal = TradeSignal(
             setup_id=candidate.id,

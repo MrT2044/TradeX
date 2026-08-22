@@ -22,6 +22,9 @@ from tradex.analysis.fvg import Fvg
 from tradex.analysis.liquidity import LiquidityPool, Sweep
 from tradex.analysis.structure import StructureEvent
 from tradex.analysis.swings import Swing
+from tradex.backtest.execution import SimulatedTrade
+from tradex.backtest.metrics import EquityPoint, Metrics
+from tradex.backtest.report import BacktestReport
 from tradex.data.integrity import Gap, IntegrityReport
 from tradex.data.provider import ProviderCapabilities, ProviderHealth
 from tradex.data.store import Coverage
@@ -291,6 +294,11 @@ class BiasDto(_Dto):
 def _finite(value: float) -> float | None:
     """NaN/Inf sind kein gueltiges JSON - im UI wird daraus schlicht "noch unbekannt"."""
     return None if value != value or value in (float("inf"), float("-inf")) else round(value, 6)
+
+
+def _rounded(value: float | None, digits: int) -> float | None:
+    """Wie `round`, laesst None aber None - "nicht bestimmbar" ist keine Zahl."""
+    return None if value is None else round(value, digits)
 
 
 class TimeframeSnapshotDto(_Dto):
@@ -620,3 +628,251 @@ class StrategyStateDto(_Dto):
     rejection_counts: dict[str, int]
     """Wie oft welcher Grund einen Trade verhindert hat - beantwortet die Frage
     'warum wird nicht gehandelt?' auf einen Blick."""
+
+
+# ------------------------------------------------------------ Backtest (Ph. 4)
+class MetricsDto(_Dto):
+    """Kennzahlen einer Trade-Menge (Spec §19).
+
+    `profit_factor`, `payoff_ratio` und `sqn` duerfen null sein - das heisst
+    "aus dieser Stichprobe nicht bestimmbar", nicht "null".
+    """
+
+    trades: int
+    wins: int
+    losses: int
+    scratches: int
+    win_rate: float
+    gross_profit: float
+    gross_loss: float
+    commission: float
+    net_pnl: float
+    profit_factor: float | None
+    expectancy_r: float
+    expectancy_usd: float
+    avg_win_r: float
+    avg_loss_r: float
+    payoff_ratio: float | None
+    best_r: float
+    worst_r: float
+    stdev_r: float
+    sqn: float | None
+    max_drawdown_usd: float
+    max_drawdown_pct: float
+    max_drawdown_r: float
+    max_consecutive_wins: int
+    max_consecutive_losses: int
+    avg_bars_held: float
+    avg_mae_r: float
+    avg_mfe_r: float
+    avg_planned_rr: float
+    start_equity: float
+    final_equity: float
+    return_pct: float
+    first_ts: int
+    last_ts: int
+    unresolved: int
+
+    @classmethod
+    def of(cls, metrics: Metrics) -> MetricsDto:
+        return cls(
+            trades=metrics.trades,
+            wins=metrics.wins,
+            losses=metrics.losses,
+            scratches=metrics.scratches,
+            win_rate=round(metrics.win_rate, 2),
+            gross_profit=round(metrics.gross_profit, 2),
+            gross_loss=round(metrics.gross_loss, 2),
+            commission=round(metrics.commission, 2),
+            net_pnl=round(metrics.net_pnl, 2),
+            profit_factor=_rounded(metrics.profit_factor, 3),
+            expectancy_r=round(metrics.expectancy_r, 4),
+            expectancy_usd=round(metrics.expectancy_usd, 2),
+            avg_win_r=round(metrics.avg_win_r, 4),
+            avg_loss_r=round(metrics.avg_loss_r, 4),
+            payoff_ratio=_rounded(metrics.payoff_ratio, 3),
+            best_r=round(metrics.best_r, 3),
+            worst_r=round(metrics.worst_r, 3),
+            stdev_r=round(metrics.stdev_r, 4),
+            sqn=_rounded(metrics.sqn, 3),
+            max_drawdown_usd=round(metrics.max_drawdown_usd, 2),
+            max_drawdown_pct=round(metrics.max_drawdown_pct, 3),
+            max_drawdown_r=round(metrics.max_drawdown_r, 3),
+            max_consecutive_wins=metrics.max_consecutive_wins,
+            max_consecutive_losses=metrics.max_consecutive_losses,
+            avg_bars_held=round(metrics.avg_bars_held, 1),
+            avg_mae_r=round(metrics.avg_mae_r, 3),
+            avg_mfe_r=round(metrics.avg_mfe_r, 3),
+            avg_planned_rr=round(metrics.avg_planned_rr, 3),
+            start_equity=round(metrics.start_equity, 2),
+            final_equity=round(metrics.final_equity, 2),
+            return_pct=round(metrics.return_pct, 3),
+            first_ts=metrics.first_ts,
+            last_ts=metrics.last_ts,
+            unresolved=metrics.unresolved,
+        )
+
+
+class EquityPointDto(_Dto):
+    ts: int
+    trade_number: int
+    equity: float
+    drawdown: float
+
+    @classmethod
+    def of(cls, point: EquityPoint) -> EquityPointDto:
+        return cls(
+            ts=point.ts,
+            trade_number=point.trade_number,
+            equity=round(point.equity, 2),
+            drawdown=round(point.drawdown, 2),
+        )
+
+
+class SimulatedTradeDto(_Dto):
+    """Ein simulierter Trade - geplant und tatsaechlich gefuellt."""
+
+    setup_id: int
+    side: str
+    session: str
+    quantity: int
+    planned_entry: float
+    entry_price: float
+    exit_price: float
+    stop: float
+    target: float
+    planned_rr: float
+    entry_ts: int
+    exit_ts: int
+    bars_held: int
+    exit_reason: str
+    pnl: float
+    commission: float
+    r_multiple: float
+    mae_r: float
+    mfe_r: float
+    stop_anchor: str
+    target_source: str
+    htf_bias: str
+
+    @classmethod
+    def of(cls, trade: SimulatedTrade) -> SimulatedTradeDto:
+        return cls(
+            setup_id=trade.setup_id,
+            side=trade.side,
+            session=trade.session,
+            quantity=trade.quantity,
+            planned_entry=trade.planned_entry,
+            entry_price=trade.entry_price,
+            exit_price=trade.exit_price,
+            stop=trade.stop,
+            target=trade.target,
+            planned_rr=round(trade.planned_rr, 2),
+            entry_ts=trade.entry_ts,
+            exit_ts=trade.exit_ts,
+            bars_held=trade.bars_held,
+            exit_reason=trade.exit_reason.value,
+            pnl=round(trade.pnl, 2),
+            commission=round(trade.commission, 2),
+            r_multiple=round(trade.r_multiple, 3),
+            mae_r=round(trade.mae_r, 3),
+            mfe_r=round(trade.mfe_r, 3),
+            stop_anchor=trade.stop_anchor,
+            target_source=trade.target_source,
+            htf_bias=trade.htf_bias,
+        )
+
+
+class BacktestReportDto(_Dto):
+    """Vollstaendiges Backtest-Ergebnis fuer Anzeige und Archiv.
+
+    `warnings` steht bewusst weit vorn im Vertrag: es sagt, ob die Kennzahlen
+    ueberhaupt gelesen werden duerfen. Das UI zeigt sie oberhalb der Zahlen an.
+    """
+
+    symbol: str
+    instrument_name: str
+    base_timeframe: str
+    bars: int
+    first_ts: int
+    last_ts: int
+    backtest_version: str
+    warnings: tuple[str, ...]
+    is_significant: bool
+    min_trades: int
+
+    overall: MetricsDto
+    in_sample: MetricsDto
+    out_of_sample: MetricsDto
+
+    by_session: dict[str, MetricsDto]
+    by_direction: dict[str, MetricsDto]
+    by_exit: dict[str, MetricsDto]
+    by_stop_anchor: dict[str, MetricsDto]
+    by_target_source: dict[str, MetricsDto]
+
+    exit_counts: dict[str, int]
+    rejections: dict[str, int]
+    signals: int
+    unfilled: int
+    trades_total: int
+    equity: tuple[EquityPointDto, ...]
+    trades: tuple[SimulatedTradeDto, ...]
+    assumptions: dict[str, object]
+
+    @classmethod
+    def of(cls, report: BacktestReport) -> BacktestReportDto:
+        def table(items: dict[str, Metrics]) -> dict[str, MetricsDto]:
+            return {name: MetricsDto.of(value) for name, value in items.items()}
+
+        return cls(
+            symbol=report.symbol,
+            instrument_name=report.instrument_name,
+            base_timeframe=report.base_timeframe,
+            bars=report.bars,
+            first_ts=report.first_ts,
+            last_ts=report.last_ts,
+            backtest_version=report.backtest_version,
+            warnings=report.warnings,
+            is_significant=report.is_significant,
+            min_trades=report.min_trades,
+            overall=MetricsDto.of(report.overall),
+            in_sample=MetricsDto.of(report.in_sample),
+            out_of_sample=MetricsDto.of(report.out_of_sample),
+            by_session=table(report.by_session),
+            by_direction=table(report.by_direction),
+            by_exit=table(report.by_exit),
+            by_stop_anchor=table(report.by_stop_anchor),
+            by_target_source=table(report.by_target_source),
+            exit_counts=report.exit_counts,
+            rejections=report.rejections,
+            signals=report.signals,
+            unfilled=report.unfilled,
+            trades_total=report.trades_total,
+            equity=tuple(EquityPointDto.of(p) for p in report.equity),
+            trades=tuple(SimulatedTradeDto.of(t) for t in report.trades),
+            assumptions=dict(report.assumptions),
+        )
+
+
+class BacktestRunDto(_Dto):
+    """Kopfzeile eines gespeicherten Laufs (Spec §21)."""
+
+    id: int
+    ts_utc: str
+    symbol: str
+    base_timeframe: str
+    first_ts: int
+    last_ts: int
+    bars: int
+    config_hash: str
+    strategy_version: str
+    backtest_version: str
+    trades: int
+    wins: int
+    losses: int
+    net_pnl: float
+    expectancy_r: float
+    profit_factor: float | None
+    max_drawdown_pct: float
+    notes: str = ""

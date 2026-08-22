@@ -23,7 +23,7 @@ from tradex.config import load_config
 from tradex.data.store import BarStore
 from tradex.domain.bars import BarSeries, to_ns
 from tradex.domain.enums import Timeframe
-from tradex.service import TradexService
+from tradex.service import STRATEGY_VERSION, TradexService
 
 SYMBOL = "MNQ_DEMO"
 
@@ -80,6 +80,10 @@ def test_health(client: TestClient):
     assert body["live_trading_enabled"] is False, "Spec 24: Live ist standardmaessig aus"
     assert len(body["config_hash"]) == 16
     assert any(p["name"] == "replay" for p in body["providers"])
+    # Spec 21: die angezeigte Regelfassung muss die sein, nach der auch
+    # entschieden und protokolliert wird - sonst zeigt das Dashboard eine
+    # Version an, unter der nie eine Entscheidung fiel.
+    assert body["strategy_version"] == STRATEGY_VERSION
 
 
 def test_instrumente_und_bestand(client: TestClient):
@@ -201,6 +205,54 @@ def test_entscheidungsprotokoll_wird_geschrieben(client: TestClient):
     body = client.post(f"/api/record?symbol={SYMBOL}").json()
     assert body["id"] > 0
     assert body["symbol"] == SYMBOL
+
+
+# ------------------------------------------------------------- Backtest (Ph. 4)
+def test_backtest_liefert_bericht_und_haelt_ihn_fest(client: TestClient):
+    """Der Lauf muss ohne vorheriges /api/load funktionieren.
+
+    Sonst haenge das Ergebnis davon ab, wie weit man im Chart vorgespult hat -
+    und waere damit nicht reproduzierbar.
+    """
+    body = client.post("/api/backtest", json={"symbol": SYMBOL, "save": True}).json()
+
+    assert body["symbol"] == SYMBOL
+    assert body["bars"] == 60 * 24 * 3
+    assert body["overall"]["trades"] == body["trades_total"]
+    assert body["min_trades"] > 0
+    # Demodaten muessen im Bericht als solche gekennzeichnet sein.
+    assert any("DEMODATEN" in warning for warning in body["warnings"])
+
+    again = client.get(f"/api/backtest?symbol={SYMBOL}").json()
+    assert again["overall"] == body["overall"]
+
+    runs = client.get(f"/api/backtest/runs?symbol={SYMBOL}").json()
+    assert runs, "der Lauf wurde nicht gespeichert"
+    assert runs[0]["trades"] == body["overall"]["trades"]
+    assert len(runs[0]["config_hash"]) == 16
+    assert runs[0]["backtest_version"] == body["backtest_version"]
+
+
+def test_backtest_laesst_den_wiedergabezustand_unberuehrt(client: TestClient):
+    client.post("/api/load", json={"symbol": SYMBOL, "feed_all": False})
+    client.post("/api/step", json={"symbol": SYMBOL, "count": 300})
+
+    client.post("/api/backtest", json={"symbol": SYMBOL, "save": False})
+
+    stepped = client.post("/api/step", json={"symbol": SYMBOL, "count": 1}).json()
+    assert stepped["cursor"] == 301, "der Backtest hat den Replay-Cursor verschoben"
+
+
+def test_backtest_ohne_daten_erklaert_sich(client: TestClient):
+    response = client.post("/api/backtest", json={"symbol": "NQ"})
+    assert response.status_code == 404
+    assert "Keine 1m-Daten" in response.json()["detail"]
+
+
+def test_backtest_ohne_lauf_erklaert_sich(client: TestClient):
+    response = client.get("/api/backtest?symbol=NQ")
+    assert response.status_code == 404
+    assert "noch kein Backtest" in response.json()["detail"]
 
 
 def test_logs(client: TestClient):

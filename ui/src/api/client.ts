@@ -1,6 +1,8 @@
 /** Zugriff auf die Engine-Schnittstelle. */
 
 import type {
+  BacktestReport,
+  BacktestRun,
   BarsResponse,
   ContextSnapshot,
   Coverage,
@@ -91,4 +93,26 @@ export const api = {
 
   reset: (symbol: string) =>
     request<StepResponse>(`/reset?symbol=${encodeURIComponent(symbol)}`, { method: 'POST' }),
+
+  /**
+   * Rechnet synchron durch - je nach Zeitraum dauert das Sekunden bis Minuten.
+   * Der Aufrufer muss die Oberflaeche solange als beschaeftigt markieren.
+   */
+  backtest: (symbol: string, options: { maxBars?: number; save?: boolean } = {}) =>
+    request<BacktestReport>('/backtest', {
+      method: 'POST',
+      body: JSON.stringify({
+        symbol,
+        max_bars: options.maxBars ?? 400000,
+        save: options.save ?? true,
+      }),
+    }),
+
+  lastBacktest: (symbol: string) =>
+    request<BacktestReport>(`/backtest?symbol=${encodeURIComponent(symbol)}`),
+
+  backtestRuns: (symbol: string, limit = 10) =>
+    request<BacktestRun[]>(
+      `/backtest/runs?symbol=${encodeURIComponent(symbol)}&limit=${limit}`,
+    ),
 };

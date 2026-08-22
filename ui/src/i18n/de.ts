@@ -29,6 +29,14 @@ const STATE_WORD: Record<string, string> = {
   range: 'seitwaerts',
 };
 
+/** Wodurch eine simulierte Position endete - siehe tradex/domain/enums.py. */
+export const EXIT_REASON: Record<string, string> = {
+  stop: 'Stop',
+  target: 'Ziel',
+  time: 'Zeitstop',
+  end_of_data: 'Datenende',
+};
+
 /** Woran der Stop verankert ist - siehe tradex/strategy/stops.py. */
 export const STOP_ANCHOR: Record<string, string> = {
   retracement: 'Rücklauf-Tief',
@@ -263,6 +271,60 @@ export const de = {
       retracement: 'Ruecklauf',
       mss: 'Strukturbruch',
     } as Record<string, string>,
+  },
+  backtest: {
+    title: 'Backtest',
+    hint: 'Rechnet die Regeln ueber den gesamten geladenen Zeitraum durch und simuliert, was aus jedem Signal geworden waere.',
+    run: 'Backtest rechnen',
+    running: 'Rechnet ...',
+    never: 'Fuer dieses Instrument wurde noch kein Backtest gerechnet.',
+    readFirst: 'Zuerst lesen',
+    notSignificant: 'Zu kleine Stichprobe - die Zahlen unten sind noch kein Befund.',
+    period: 'Zeitraum',
+    result: 'Ergebnis',
+    trades: 'Trades',
+    winRate: 'Trefferquote',
+    expectancy: 'Erwartungswert',
+    expectancyHint:
+      'Durchschnittliches Ergebnis je Trade, gemessen in R (Vielfaches des eingegangenen Risikos). Ueber 0 heisst: die Regel traegt sich - vorausgesetzt, die Stichprobe ist gross genug.',
+    profitFactor: 'Profitfaktor',
+    profitFactorHint: 'Summe der Gewinne geteilt durch Summe der Verluste. Unter 1 verliert das System.',
+    payoff: 'Gewinn/Verlust',
+    sqn: 'SQN',
+    sqnHint:
+      'Erwartungswert im Verhaeltnis zu seiner Schwankung und zur Anzahl der Trades. Ein guter Schnitt aus acht Trades bekommt hier keine gute Note.',
+    netPnl: 'Nettoergebnis',
+    commission: 'davon Gebuehren',
+    equity: 'Kontoverlauf',
+    finalEquity: 'Konto am Ende',
+    returnPct: 'Rendite',
+    drawdown: 'Groesster Rueckgang',
+    drawdownHint: 'Groesster Rueckgang vom jeweiligen Hoechststand - nicht vom Startwert.',
+    lossStreak: 'Laengste Verlustserie',
+    holding: 'Haltedauer',
+    mae: 'MAE / MFE',
+    maeHint:
+      'Wie weit lief es gegen die Position (MAE) und wie weit fuer sie (MFE), jeweils in R. Beantwortet, ob ein engerer Stop ueberhaupt haltbar gewesen waere.',
+    halves: 'Zeitraumhaelften',
+    halvesHint:
+      'Erste und zweite Haelfte getrennt gerechnet. Weichen sie stark ab, haengt das Ergebnis eher am Zeitraum als an der Regel.',
+    firstHalf: 'erste Haelfte',
+    secondHalf: 'zweite Haelfte',
+    bySession: 'Nach Session',
+    byDirection: 'Nach Richtung',
+    byExit: 'Nach Ausstiegsart',
+    signals: 'Signale',
+    filled: 'gefuellt',
+    unfilled: 'nie gefuellt',
+    assumptions: 'Annahmen der Ausfuehrung',
+    assumptionsHint:
+      'Ein Ergebnis ohne seine Ausfuehrungsannahmen ist nicht interpretierbar. Sie stehen in config/default.yaml unter "backtest".',
+    whyNoTrade: 'Warum kein Trade zustande kam',
+    noTrades:
+      'Kein einziger Trade. Bevor die Kennzahlen etwas bedeuten koennen, muss geklaert sein, woran die Kette scheitert.',
+    trade: 'Trade',
+    exitReason: 'Ausstieg',
+    rMultiple: 'R',
   },
   replay: {
     title: 'Wiedergabe',

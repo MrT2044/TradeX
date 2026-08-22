@@ -12,8 +12,13 @@ Cygwin-Fork-Fehlern ab (`dofork: child -1`, `Resource temporarily unavailable`).
 **Immer PowerShell benutzen.** Für Dateien die Datei-Tools (Read/Write/Edit),
 nicht Shell-Textmanipulation — Gründe unten.
 
+Für den Alltag reicht ein Doppelklick auf `TradeX.bat` (prüft Umgebung, baut das
+UI beim ersten Start, öffnet das Fenster; Argumente werden durchgereicht).
+**Batchdateien brauchen CRLF** — `.gitattributes` erzwingt das, weil cmd.exe
+reine LF-Dateien nur teilweise verarbeitet und `goto` dabei still bricht.
+
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/ -q      # Tests (aktuell 225)
+.\.venv\Scripts\python.exe -m pytest tests/ -q      # Tests (aktuell 274)
 .\.venv\Scripts\python.exe -m ruff check tradex tests scripts
 .\.venv\Scripts\python.exe -m tradex.shell          # Desktop-Fenster
 .\.venv\Scripts\python.exe -m tradex.shell --server # nur Engine, Port 8765
@@ -64,6 +69,13 @@ aufweichen** — jede Verletzung entwertet rückwirkend jede Backtest-Aussage.
 Tests prüfen das direkt (`tests/test_context.py`, `tests/test_strategy_engine.py`):
 zwei Läufe → byte-identische Snapshots; `feed()` ≡ `on_base_bar()`.
 
+Seit Phase 4 kommt die schärfste Prüfung dazu:
+`tests/test_backtest_runner.py::test_backtest_faellt_dieselben_entscheidungen_wie_die_strategie`
+stellt den Backtest-Lauf dem blanken Strategielauf gegenüber und verlangt
+identische Entscheidungen. **Fällt dieser Test, ist jede Backtest-Aussage
+wertlos** — egal wie gut sie aussieht. Der Backtest darf der Analyse
+ausschließlich die *Ausführung* hinzufügen, nie eine zweite Regelauslegung.
+
 ---
 
 ## Konventionen
@@ -78,6 +90,12 @@ zwei Läufe → byte-identische Snapshots; `feed()` ≡ `on_base_bar()`.
   `undefined` im Dashboard.
 - **Neue Schwellenwerte** gehören in `config/default.yaml` *und* als
   pydantic-Feld in `tradex/config.py`.
+- **Schlupf läuft beim Ein- und Ausstieg in entgegengesetzte Richtungen.**
+  Teurer *kaufen* heißt höher, schlechter *verkaufen* heißt tiefer. Eine
+  gemeinsame „gegen die Position"-Funktion für beides hat genau hier schon
+  zugeschlagen: Stops füllten *besser* als ihr Kurs, was aus dem pessimistischen
+  Simulator einen geschönten machte. Deshalb `_slip_entry` **und** `_slip_exit`
+  in `tradex/backtest/execution.py`.
 - **Provider-Abstraktion respektieren.** Die Engine darf nie eine konkrete
   Datenquelle kennen. `ProviderCapabilities` macht explizit, was eine Quelle
   kann — die Kernstrategie darf sich nur auf Fähigkeiten stützen, die jede
@@ -115,7 +133,12 @@ Zwei Quellen, beide mit eigenem Symbol, damit nichts verwechselt wird:
 .\.venv\Scripts\python.exe scripts\fetch_dukascopy.py --from 2023-01-01
 .\.venv\Scripts\python.exe scripts\generate_demo_data.py --days 45
 .\.venv\Scripts\python.exe scripts\run_analysis.py --symbol MNQ_PROXY
+.\.venv\Scripts\python.exe scripts\run_backtest.py --symbol MNQ_PROXY --save
 ```
+
+`run_backtest.py` liefert **Rückgabewert 2**, wenn kein einziger Trade zustande
+kam. Das ist kein Fehler, sondern ein Befund, der eine Antwort verlangt — und
+in einem Skript nicht als Erfolg durchgehen darf.
 
 ### Dukascopy — Fallen, die schon zugeschlagen haben
 
@@ -148,6 +171,13 @@ Zwei Quellen, beide mit eigenem Symbol, damit nichts verwechselt wird:
 - **Konfigurationswerte stillschweigend korrigieren.** `tradex/risk/consistency.py`
   *meldet* Widersprüche (z. B. `max_stop_ticks` größer als das Risikobudget
   erlaubt) und ändert nichts. Welche Seite angepasst wird, entscheidet der Nutzer.
+- **Parameter optimieren.** Ein Suchlauf über Schwellenwerte findet zuverlässig
+  eine Kombination, die auf der Vergangenheit gut aussieht — und sagt nichts über
+  die Zukunft. Der Backtest beantwortet eine Ja/Nein-Frage zu *einer* Regelfassung.
+- **Ausführungsannahmen aufweichen, damit der Backtest besser aussieht.** Die
+  Werte unter `backtest:` sind absichtlich pessimistisch. `entry_fill:
+  signal_close` existiert nur zum *Messen* des Unterschieds und meldet sich im
+  Bericht selbst als beschönigend.
 - **Live-Trading freischalten.** `execution.live_trading_enabled` ist aus und
   braucht eine zweite ausdrückliche Bestätigung (Spec §24). Phase 8/9.
 
@@ -162,10 +192,16 @@ tradex/analysis/    Swings, Struktur, FVG, Liquidität, Displacement, Bias
                     → MarketContext = der einzige Analysepfad
 tradex/strategy/    Pflichtkette als Zustandsmaschine, Stop, Ziel
 tradex/risk/        Größenberechnung, Tagesgrenzen, Konsistenzprüfung
+tradex/backtest/    Ausführungssimulation, Kennzahlen, Bericht, Laufarchiv
 tradex/api/         FastAPI + DTOs = einziger UI-Vertrag
 tradex/service.py   Anwendungsschicht (Laden, Replay-Cursor, Protokoll)
 ui/                 React + lightweight-charts v5, deutsch
 bridge_nt8/         Protokoll-Spezifikation für Phase 5 (noch nicht gebaut)
 ```
 
-Phasen 1–3 fertig. Als Nächstes **Phase 4: Backtesting und Statistik** (Spec §19).
+Das Schema der Backtest-Tabellen steht in `tradex/persistence/db.py`
+(Migration 2), der Zugriff darauf in `tradex/backtest/store.py`: die
+Persistenzschicht darf nichts über Backtests wissen, sonst zeigt eine untere
+Schicht auf eine obere.
+
+Phasen 1–4 fertig. Als Nächstes **Phase 5: NinjaTrader Paper Trading**.

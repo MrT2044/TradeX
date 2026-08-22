@@ -110,6 +110,75 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX ix_data_gaps_symbol ON data_gaps (symbol, timeframe, gap_start_ts);
         """,
     ),
+    (
+        2,
+        """
+        -- Backtest-Laeufe (Spec §19, §21).
+        --
+        -- Ein Lauf ist nur dann etwas wert, wenn spaeter noch feststellbar ist,
+        -- WORAUF er sich bezog: welche Konfiguration, welche Strategieversion,
+        -- welche Ausfuehrungsannahmen, welcher Zeitraum. Deshalb steht all das
+        -- in der Zeile und nicht nur das Ergebnis. `strategy_versions.backtest_ref`
+        -- zeigt auf `backtest_runs.id`.
+        CREATE TABLE backtest_runs (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts_utc           TEXT    NOT NULL,
+            symbol           TEXT    NOT NULL,
+            base_timeframe   TEXT    NOT NULL,
+            first_ts         INTEGER NOT NULL,
+            last_ts          INTEGER NOT NULL,
+            bars             INTEGER NOT NULL,
+            config_hash      TEXT    NOT NULL,
+            strategy_version TEXT    NOT NULL,
+            backtest_version TEXT    NOT NULL,
+            -- Kennzahlen als Spalten, damit Laeufe ohne JSON-Auswertung
+            -- vergleichbar sind.
+            trades           INTEGER NOT NULL,
+            wins             INTEGER NOT NULL,
+            losses           INTEGER NOT NULL,
+            net_pnl          REAL    NOT NULL,
+            expectancy_r     REAL    NOT NULL,
+            profit_factor    REAL,
+            max_drawdown_pct REAL    NOT NULL,
+            -- Der vollstaendige Bericht inklusive Annahmen und Warnungen.
+            report           TEXT    NOT NULL,
+            notes            TEXT    NOT NULL DEFAULT ''
+        );
+        CREATE INDEX ix_backtest_runs_symbol ON backtest_runs (symbol, ts_utc);
+
+        -- Einzeltrades eines Laufs. Getrennt gespeichert, weil die
+        -- interessanten Fragen ("verlieren Shorts in der Asia-Session?")
+        -- Abfragen sind und keine Textsuche im JSON-Bericht.
+        CREATE TABLE backtest_trades (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            run_id         INTEGER NOT NULL REFERENCES backtest_runs (id) ON DELETE CASCADE,
+            setup_id       INTEGER NOT NULL,
+            direction      TEXT    NOT NULL,
+            session        TEXT    NOT NULL,
+            trading_day    INTEGER NOT NULL,
+            entry_ts       INTEGER NOT NULL,
+            exit_ts        INTEGER NOT NULL,
+            entry_price    REAL    NOT NULL,
+            exit_price     REAL    NOT NULL,
+            stop           REAL    NOT NULL,
+            target         REAL    NOT NULL,
+            quantity       INTEGER NOT NULL,
+            exit_reason    TEXT    NOT NULL,
+            bars_held      INTEGER NOT NULL,
+            planned_rr     REAL    NOT NULL,
+            risk_amount    REAL    NOT NULL,
+            pnl            REAL    NOT NULL,
+            commission     REAL    NOT NULL,
+            r_multiple     REAL    NOT NULL,
+            mae_r          REAL    NOT NULL,
+            mfe_r          REAL    NOT NULL,
+            stop_anchor    TEXT    NOT NULL,
+            target_source  TEXT    NOT NULL,
+            htf_bias       TEXT    NOT NULL
+        );
+        CREATE INDEX ix_backtest_trades_run ON backtest_trades (run_id, entry_ts);
+        """,
+    ),
 ]
 
 CURRENT_SCHEMA_VERSION = MIGRATIONS[-1][0]
