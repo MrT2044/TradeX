@@ -17,8 +17,8 @@ Arbeitshinweise für dieses Repository. Was das Projekt *ist*, steht im
 
 | | |
 |---|---|
-| fertig | Registry (mehrere Strategien), Multi-Instrument, Musterstatistik |
-| offen | News-Filter |
+| fertig | Registry, Multi-Instrument, Musterstatistik, News-Filter (Termine) |
+| offen | News-Filter (Schlagzeilen) — braucht erst eine Messung, siehe unten |
 | wartet | Phase 5 — Broker-Anschluss über NinjaTrader |
 
 Phase 4b stand **nicht im ursprünglichen Plan**. Phase 4 hat sie erzwungen: sie
@@ -220,6 +220,75 @@ ihr.
 
 ---
 
+## News-Filter
+
+Zwei Dinge, die nichts miteinander zu tun haben:
+
+| | Termine | Schlagzeilen |
+|---|---|---|
+| Beispiel | FOMC, CPI, NFP | „Trump sagt etwas" |
+| bekannt | Wochen vorher, minutengenau | gar nicht |
+| historisch abrufbar | ja | schwer, mit exaktem Zeitstempel kaum |
+| **backtestbar** | **ja** | **nein** (ohne Archiv) |
+| Stand | gebaut | offen |
+
+Der Unterschied ist keine Haarspalterei, sondern Spec §29. **Blockiert die
+Live-Engine Trades wegen einer Schlagzeile, die der Backtest nie gesehen hat,
+ist jede Backtest-Aussage rückwirkend wertlos.** Deshalb ist nur der Teil
+gebaut, der in beiden Welten dieselbe Antwort gibt.
+
+### Wie er funktioniert
+
+Dieselbe Aufteilung wie bei Kursdaten: **Skript holt, Speicher hält, Engine
+liest.** `scripts/fetch_news.py` schreibt nach `data/news/events.jsonl`, die
+Engine liest ausschließlich diese Datei. Ein HTTP-Aufruf mitten in einer
+Entscheidung würde Invariante 2 dreifach verletzen — er kann scheitern, er
+liefert je nach Zeitpunkt anderes, und er ist nicht wiederholbar.
+
+Drei Quellen, weil keine kostenlose beides kann (Historie **und** Uhrzeit):
+
+| Quelle | liefert | Schlüssel | Haken |
+|---|---|---|---|
+| `holidays` | Börsenfeiertage | – | reine Rechnung, kein Netz |
+| `forexfactory` | exakte Uhrzeit + Impact | **nein** | nur die laufende Woche |
+| `fred` | Historie ab 2000 | frei, ohne Karte | nur der **Tag**, keine Uhrzeit |
+
+Termine aus FRED tragen deshalb `TimePrecision.ASSUMED` und bekommen ein
+breiteres Fenster (`assumed_time_extra_minutes`), statt eine Genauigkeit
+vorzutäuschen, die die Quelle nicht hat. Der Bestand für den laufenden Betrieb
+wächst wöchentlich aus ForexFactory — `merge()` führt zusammen, überschreibt
+nie, und ein bekannter Termin behält seine Fassung.
+
+### Vier Regeln
+
+1. **Nur Einstiege werden gesperrt, nie Ausstiege.** Eine offene Position ohne
+   Stop wäre das Gegenteil von Risikosenkung. Das ist keine Einstellung,
+   sondern Architektur: `tradex/news/` kennt die Ausführung nicht, ein Test
+   verbietet den Import.
+2. **Ein Filter ohne Daten meldet sich.** Der teuerste Fehler wäre ein
+   eingeschalteter Filter, der außerhalb seiner Abdeckung alles durchwinkt und
+   dabei aussieht wie einer, der nichts zu beanstanden hat. Der Kalender kennt
+   seine Grenzen (`covers()`), es gibt einen eigenen Reason-Code
+   (`news.no_data`), und der Backtest-Bericht warnt, wenn ein Lauf weitgehend
+   ohne Filter gerechnet wurde.
+3. **Unbekannte Impact-Stufen werden übersprungen, nicht geraten.**
+   „Vermutlich mittel" wäre eine erfundene Sperre.
+4. **Der Kalender wird an genau einer Stelle geladen** (`registry.py`) und an
+   alle Instrumente durchgereicht — dieselbe Überlegung wie beim Risikobuch.
+
+### Warum Schlagzeilen noch fehlen
+
+Die einzige kostenlose Quelle mit Historie **und** 15-Minuten-Auflösung ist
+GDELT (ohne Schlüssel, ab 2015). Die Artikel-API antwortet dieser IP derzeit
+mit HTTP 429; verifizieren ließ sie sich nicht.
+
+Wichtiger als das Netzproblem: Eine Schlagzeilen-Sperre wäre die erste Regel im
+System, die niemals gemessen wurde. Der richtige Weg ist die Reihenfolge, die
+dieses Projekt überall verwendet — erst messen (bewegt ein Schlagzeilen-Ausschlag
+den Kurs überhaupt?), dann filtern. Die Musterstatistik ist genau dafür da.
+
+---
+
 ## Musterstatistik
 
 `scripts\run_backtest.py --muster` prüft, ob von den Aufschlüsselungen des
@@ -323,6 +392,7 @@ Gegen sich selbst geprüft wäre eine eigene Implementierung wertlos.
 .\.venv\Scripts\python.exe scripts\run_analysis.py --symbol MNQ_PROXY
 .\.venv\Scripts\python.exe scripts\run_backtest.py --symbol MNQ_PROXY,MES_PROXY --save
 .\.venv\Scripts\python.exe scripts\run_backtest.py --symbol MNQ_PROXY --muster
+.\.venv\Scripts\python.exe scripts\fetch_news.py --source forexfactory
 ```
 
 `run_backtest.py` liefert **Rückgabewert 2**, wenn kein einziger Trade zustande
@@ -412,6 +482,10 @@ tradex/strategy/    base.py         Vertrag: Strategie schlägt vor, Portfolio e
                     opening_range   Strategie 2 — Ausbruch aus der Eröffnungsspanne
                     portfolio.py    mehrere Strategien, EINE Risikoprüfung
                     registry.py     welche Strategien laufen — an genau einer Stelle
+tradex/news/        events.py       Zeitpunkt, Name, Land, Wucht — mehr nicht
+                    store.py        lokaler Bestand (JSONL) = einzige Quelle der Engine
+                    calendar.py     Sperrfenster, reine Funktion ohne I/O
+                    providers.py    NUR fürs Abrufskript, nie für die Engine
 tradex/risk/        Größenberechnung, Tagesgrenzen, Konsistenzprüfung, Risikobuch
 tradex/backtest/    execution.py    wie ein Signal gefüllt und beendet worden wäre
                     runner.py       SymbolBook (ein Instrument) + Backtester (das Konto)

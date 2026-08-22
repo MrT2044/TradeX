@@ -20,6 +20,7 @@ from tradex.analysis import reasons
 from tradex.config import Config
 from tradex.domain.enums import SessionName
 from tradex.domain.instruments import Instrument
+from tradex.news.calendar import NewsCalendar
 from tradex.persistence.models import Reason
 from tradex.risk.ledger import RiskLedger
 from tradex.risk.sizing import PositionSize, calculate_position_size
@@ -44,10 +45,64 @@ class RiskAssessment:
 class RiskEngine:
     """Prueft ein fertiges Setup gegen alle Risikogrenzen."""
 
-    def __init__(self, config: Config, instrument: Instrument, ledger: RiskLedger | None = None) -> None:
+    def __init__(
+        self,
+        config: Config,
+        instrument: Instrument,
+        ledger: RiskLedger | None = None,
+        news: NewsCalendar | None = None,
+    ) -> None:
         self.config = config
         self.instrument = instrument
         self.ledger = ledger or RiskLedger()
+        # Der Kalender wird von aussen hereingereicht, nicht hier geladen: die
+        # Risk Engine darf keine Datei anfassen (Invariante 2). Wer sie baut,
+        # entscheidet auch, welchen Datenbestand sie sieht - und Backtest wie
+        # Live bekommen so nachweislich denselben.
+        self.news = news
+
+    # ----------------------------------------------------------- Nachrichten
+    def check_news(self, ts: int) -> list[Reason]:
+        """Spec Paragraph 14/15: kein EINSTIEG in einem Sperrfenster.
+
+        Ausstiege sind hier nie betroffen - diese Methode wird ausschliesslich
+        beim Pruefen eines Vorschlags aufgerufen, nie beim Beenden einer
+        Position.
+        """
+        params = self.config.news
+        if not params.enabled:
+            return [Reason(reasons.NEWS_OK, True, {"enabled": False})]
+        if self.news is None or self.news.is_empty:
+            # Eingeschaltet, aber ohne Daten. Das ist der gefaehrlichste
+            # Zustand ueberhaupt: der Filter meldet nichts und sieht dabei aus
+            # wie einer, der nichts zu beanstanden hat.
+            blocked = params.on_missing_data == "block"
+            return [Reason(reasons.NEWS_NO_DATA, not blocked, {"reason": "kein Kalender geladen"})]
+
+        if not self.news.covers(ts):
+            blocked = params.on_missing_data == "block"
+            return [
+                Reason(
+                    reasons.NEWS_NO_DATA,
+                    not blocked,
+                    {"ts": ts, "von": self.news.first_ts, "bis": self.news.last_ts},
+                )
+            ]
+
+        window = self.news.blackout_at(ts)
+        if window is None:
+            return [Reason(reasons.NEWS_OK, True, {"events": self.news.considered})]
+        return [
+            Reason(
+                reasons.NEWS_BLACKOUT,
+                False,
+                {
+                    "event": window.label,
+                    "impact": window.impact.value,
+                    "minuten_bis_ende": round((window.end - ts) / 60e9, 1),
+                },
+            )
+        ]
 
     # --------------------------------------------------------------- Marktfilter
     def check_trading_window(self, session: str, atr: float) -> list[Reason]:
@@ -145,10 +200,18 @@ class RiskEngine:
         atr: float,
         trading_day: int,
         pending: int = 0,
+        ts: int = 0,
     ) -> RiskAssessment:
         collected: list[Reason] = []
 
         collected.extend(self.check_limits(trading_day, pending))
+        if any(not r.ok for r in collected):
+            return RiskAssessment(False, None, tuple(collected))
+
+        # Nachrichten vor dem Handelsfenster: beide sind Marktfilter, aber
+        # "CPI in drei Minuten" ist die praezisere Auskunft als "falsche
+        # Session" - und im Protokoll steht der erste Grund vorn.
+        collected.extend(self.check_news(ts))
         if any(not r.ok for r in collected):
             return RiskAssessment(False, None, tuple(collected))
 

@@ -35,6 +35,7 @@ from tradex.analysis.context import MarketContext, TimeframeUpdate
 from tradex.config import Config
 from tradex.domain.instruments import Instrument
 from tradex.logging_setup import get_logger
+from tradex.news.calendar import NewsCalendar
 from tradex.persistence.models import Reason
 from tradex.risk.engine import RiskEngine
 from tradex.risk.ledger import RiskLedger
@@ -54,6 +55,7 @@ class StrategyPortfolio:
         config: Config,
         strategies: list[Strategy],
         ledger: RiskLedger | None = None,
+        news: NewsCalendar | None = None,
     ) -> None:
         if not strategies:
             raise ValueError("Ein Portfolio ohne Strategien kann nichts entscheiden")
@@ -66,7 +68,7 @@ class StrategyPortfolio:
         self.config = config
         self.strategies = strategies
         self.ledger = ledger or RiskLedger()
-        self.risk = RiskEngine(config, instrument, self.ledger)
+        self.risk = RiskEngine(config, instrument, self.ledger, news=news)
 
         self.decisions: list[StrategyDecision] = []
         self.signals: list[TradeSignal] = []
@@ -129,6 +131,7 @@ class StrategyPortfolio:
             proposal.atr,
             proposal.trading_day,
             pending=approved,
+            ts=proposal.ts,
         )
         collected.extend(assessment.reasons)
 

@@ -180,6 +180,36 @@ Schwellenwerte **in** ihr.
 Jede Strategie ist eine **Hypothese**. Ob sie einen Edge hat, sagt der Backtest,
 einschließlich der Antwort „nein".
 
+### Der News-Filter (Spec §14/§15)
+
+```bash
+python scripts/fetch_news.py --source holidays --from 2023-01-01 --to 2027-01-01
+python scripts/fetch_news.py --source forexfactory     # wöchentlich
+```
+
+Um Wirtschaftstermine herum wird **nicht eingestiegen**. Ausstiege bleiben immer
+möglich — eine offene Position ohne Stop wäre das Gegenteil von Risikosenkung.
+
+Die Engine fragt dabei **nie** eine API: ein Skript holt die Termine, eine Datei
+hält sie, die Engine liest nur diese Datei. Ein HTTP-Aufruf mitten in einer
+Entscheidung wäre nicht wiederholbar — und Backtest und Live sähen Verschiedenes.
+
+Drei Quellen, weil keine kostenlose beides kann. `holidays` rechnet
+Börsenfeiertage ohne Netz aus, `forexfactory` liefert exakte Uhrzeiten ohne
+Schlüssel (aber nur die laufende Woche), `fred` liefert Historie mit freiem
+Schlüssel (aber nur den Tag). Ergänzte Uhrzeiten bekommen ein **breiteres**
+Fenster, statt eine Genauigkeit vorzutäuschen, die die Quelle nicht hat.
+
+Der gefährlichste Zustand wäre ein eingeschalteter Filter ohne Daten: er würde
+alles durchwinken und dabei aussehen wie einer, der nichts zu beanstanden hat.
+Deshalb kennt der Kalender seine eigene Abdeckung, es gibt dafür einen eigenen
+Reason-Code, und der Backtest-Bericht warnt ausdrücklich, wenn ein Lauf
+weitgehend ohne Filter gerechnet wurde.
+
+**Nicht enthalten: Schlagzeilen.** „Trump sagt etwas" ist nicht vorhersehbar und
+historisch kaum mit exaktem Zeitstempel zu bekommen. Eine Sperre, die live
+greift und im Backtest fehlt, würde jede Backtest-Aussage entwerten (Spec §29).
+
 ### Mehrere Instrumente an einem Konto
 
 ```bash

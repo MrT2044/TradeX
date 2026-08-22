@@ -393,7 +393,47 @@ class ExecutionConfig(_Frozen):
 
 
 class NewsConfig(_Frozen):
+    """Spec Paragraph 14/15: Sperrfenster um Wirtschaftstermine.
+
+    Der Filter kann nur EINSTIEGE verhindern. Ausstiege bleiben immer moeglich -
+    eine offene Position ohne Stop waere das Gegenteil von Risikosenkung. Das
+    ist keine Einstellung, sondern eine Eigenschaft der Architektur:
+    `tradex/news/` kennt die Ausfuehrung gar nicht.
+    """
+
     enabled: bool = False
+
+    #: Wo die abgerufenen Termine liegen. Die Engine liest NUR diese Datei,
+    #: nie eine API - sonst waere eine Entscheidung nicht wiederholbar
+    #: (Invariante 2) und Backtest und Live saehen Verschiedenes.
+    store: Path = Path("data/news/events.jsonl")
+
+    #: Ab welcher Wucht gesperrt wird.
+    min_impact: Literal["low", "medium", "high"] = "high"
+
+    #: Welche Laender zaehlen. Leer = alle. Fuer Nasdaq/S&P ist USD relevant;
+    #: ein CPI aus Neuseeland bewegt den MNQ nicht.
+    countries: tuple[str, ...] = ("USD",)
+
+    block_before_minutes: int = Field(default=15, ge=0)
+    block_after_minutes: int = Field(default=15, ge=0)
+
+    #: Aufschlag auf beide Seiten, wenn die Uhrzeit nicht gemeldet, sondern aus
+    #: der ueblichen Veroeffentlichungszeit ergaenzt wurde. Ohne diesen
+    #: Aufschlag taeuschte das Fenster eine Genauigkeit vor, die die Quelle
+    #: nicht hat.
+    assumed_time_extra_minutes: int = Field(default=15, ge=0)
+
+    #: Was mit Terminen geschieht, von denen nur der TAG bekannt ist.
+    #: `block_day` sperrt den ganzen UTC-Tag - drastisch, aber ehrlich.
+    #: `ignore` laesst sie weg und zaehlt sie als uebersprungen.
+    day_only_policy: Literal["ignore", "block_day"] = "ignore"
+
+    #: Was gilt, wenn fuer einen Zeitpunkt gar keine Termine vorliegen.
+    #: `warn` handelt weiter und vermerkt es in jeder Entscheidung;
+    #: `block` handelt nicht. Fuer den Live-Betrieb ist `block` die sichere
+    #: Wahl, fuer Backtests ueber Zeitraeume ohne Kalenderdaten unbrauchbar.
+    on_missing_data: Literal["warn", "block"] = "warn"
 
 
 # --------------------------------------------------------------------- Root

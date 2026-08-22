@@ -327,5 +327,13 @@ execution:       # Phase 5/8/9 - Spec §18
                               # | live_manual | live_auto
   live_trading_enabled: false # Spec §24: Live standardmaessig deaktiviert
 
-news:            # Phase 6 - Spec §14/§15
+news:            # Spec §14/§15 - Sperrfenster um Wirtschaftstermine
   enabled: false
+  store: data/news/events.jsonl
+  min_impact: high
+  countries: [USD]
+  block_before_minutes: 15
+  block_after_minutes: 15
+  assumed_time_extra_minutes: 15
+  day_only_policy: ignore
+  on_missing_data: warn

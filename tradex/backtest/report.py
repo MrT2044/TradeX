@@ -203,6 +203,15 @@ def _warnings(
                 "Das Ergebnis haengt eher am Zeitraum als an der Regel."
             )
 
+    if config.news.enabled and result.news_missing:
+        share = 100.0 * result.news_missing / max(len(result.decisions), 1)
+        messages.append(
+            f"Nachrichtenfilter ist eingeschaltet, aber fuer {share:.0f} % der "
+            f"Entscheidungen ({result.news_missing:,}) lagen keine Termine vor. Dieser Lauf "
+            "wurde weitgehend OHNE Filter gerechnet - er ist mit einem Live-Betrieb MIT "
+            "Filter nicht vergleichbar. Erst Termine nachladen (scripts/fetch_news.py)."
+        )
+
     if config.backtest.entry_fill == "signal_close":
         messages.append(
             "entry_fill=signal_close: gefuellt wird zum Schlusskurs der Signalbar. "

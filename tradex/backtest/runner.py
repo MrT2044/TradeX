@@ -53,6 +53,7 @@ import heapq
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from tradex.analysis import reasons as R
 from tradex.analysis.context import MarketContext
 from tradex.backtest.execution import OpenTrade, SimulatedTrade
 from tradex.config import Config
@@ -60,9 +61,10 @@ from tradex.domain.bars import Bar, BarSeries
 from tradex.domain.enums import ExitReason, Timeframe
 from tradex.domain.instruments import Instrument
 from tradex.logging_setup import get_logger
+from tradex.news.calendar import NewsCalendar
 from tradex.risk.ledger import OpenPosition, RiskLedger
 from tradex.strategy.portfolio import StrategyPortfolio
-from tradex.strategy.registry import build_portfolio
+from tradex.strategy.registry import build_portfolio, load_news_calendar
 from tradex.strategy.signal import StrategyDecision, TradeSignal
 
 log = get_logger(__name__)
@@ -96,6 +98,10 @@ class BacktestResult:
     """Signale, die nie gefuellt wurden - die Daten endeten dazwischen."""
     stale: int = 0
     """Signale, die ueber einer Datenluecke lagen und deshalb verworfen wurden."""
+    news_missing: int = 0
+    """Entscheidungen, bei denen der Nachrichtenfilter aktiv war, aber keine
+    Termine fuer den Zeitpunkt vorlagen. Der gefaehrlichste Zustand: der Filter
+    laeuft, tut aber nichts, und das Ergebnis sieht aus wie eines MIT Filter."""
     rejections: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -115,7 +121,12 @@ class SymbolBook:
     """
 
     def __init__(
-        self, symbol: str, instrument: Instrument, config: Config, ledger: RiskLedger
+        self,
+        symbol: str,
+        instrument: Instrument,
+        config: Config,
+        ledger: RiskLedger,
+        news: NewsCalendar | None = None,
     ) -> None:
         self.symbol = symbol.upper()
         self.instrument = instrument
@@ -124,7 +135,7 @@ class SymbolBook:
         self.ledger = ledger
 
         self.context = MarketContext(self.symbol, instrument, config)
-        self.strategy = build_portfolio(self.symbol, instrument, config, ledger=ledger)
+        self.strategy = build_portfolio(self.symbol, instrument, config, ledger=ledger, news=news)
 
         self.trades: list[SimulatedTrade] = []
         self.unfilled = 0
@@ -290,8 +301,12 @@ class Backtester:
         self.params = config.backtest
         # EIN Risikobuch fuer alle Instrumente - das ist der Sinn der Sache.
         self.ledger = RiskLedger()
+        # Ebenso EIN Nachrichtenkalender: er einmal je Symbol geladen waere
+        # dieselbe Datei mehrfach im Speicher, und bei einem Abruf zwischen
+        # zwei Ladevorgaengen saehen die Buecher verschiedene Termine.
+        self.news = load_news_calendar(config)
         self.books = {
-            name.upper(): SymbolBook(name, item, config, self.ledger)
+            name.upper(): SymbolBook(name, item, config, self.ledger, news=self.news)
             for name, item in instruments.items()
         }
 
@@ -357,7 +372,10 @@ class Backtester:
         )
 
         rejections: dict[str, int] = {}
+        news_missing = 0
         for decision in decisions:
+            if any(r.code == R.NEWS_NO_DATA for r in decision.reasons):
+                news_missing += 1
             if decision.is_trade:
                 continue
             code = decision.blocking_reason or "unbekannt"
@@ -390,6 +408,7 @@ class Backtester:
             signals=sum(len(book.strategy.signals) for book in books),
             unfilled=sum(book.unfilled for book in books),
             stale=stale,
+            news_missing=news_missing,
             rejections=dict(sorted(rejections.items(), key=lambda kv: kv[1], reverse=True)),
         )
 

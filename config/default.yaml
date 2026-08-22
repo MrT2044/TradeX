@@ -334,5 +334,33 @@ execution:       # Phase 5/8/9 - Spec §18
                               # | live_manual | live_auto
   live_trading_enabled: false # Spec §24: Live standardmaessig deaktiviert
 
-news:            # Phase 6 - Spec §14/§15
+news:            # Spec §14/§15 - Sperrfenster um Wirtschaftstermine
+  # Der Filter kann nur EINSTIEGE verhindern. Ausstiege bleiben immer moeglich:
+  # eine offene Position ohne Stop waere das Gegenteil von Risikosenkung.
   enabled: false
+
+  # Die Engine liest NUR diese Datei, nie eine API. Gefuellt wird sie von
+  # scripts/fetch_news.py - sonst haenge eine Entscheidung daran, ob gerade
+  # Netz da war, und Backtest und Live saehen Verschiedenes.
+  store: data/news/events.jsonl
+
+  min_impact: high              # low | medium | high
+  countries: [USD]              # leer = alle. Ein CPI aus Neuseeland
+                                # bewegt den MNQ nicht.
+
+  block_before_minutes: 15
+  block_after_minutes: 15
+
+  # Aufschlag, wenn die Uhrzeit nicht gemeldet, sondern aus der ueblichen
+  # Veroeffentlichungszeit ergaenzt wurde (FRED liefert historisch nur den Tag).
+  assumed_time_extra_minutes: 15
+
+  # Termine, von denen nur der Tag bekannt ist (Feiertage):
+  # ignore = weglassen | block_day = ganzen UTC-Tag sperren
+  day_only_policy: ignore
+
+  # Was gilt, wenn fuer einen Zeitpunkt gar keine Termine vorliegen.
+  # warn  = handeln, aber in jeder Entscheidung vermerken
+  # block = nicht handeln (fuer Live die sichere Wahl, fuer Backtests ueber
+  #         Zeitraeume ohne Kalenderdaten unbrauchbar)
+  on_missing_data: warn

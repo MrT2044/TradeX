@@ -78,6 +78,14 @@ WINDOW_VOLATILITY_LOW: Final = "window.volatility_low"
 WINDOW_VOLATILITY_HIGH: Final = "window.volatility_high"
 WINDOW_OK: Final = "window.ok"
 
+# --- Nachrichtenfilter (Spec Paragraph 14/15) -------------------------------
+NEWS_BLACKOUT: Final = "news.blackout"
+NEWS_NO_DATA: Final = "news.no_data"
+"""Fuer diesen Zeitpunkt liegen gar keine Termine vor. Bewusst ein eigener
+Code und nicht stilles Durchwinken: ein Filter ohne Daten sieht sonst aus wie
+ein Filter, der nichts zu beanstanden hat."""
+NEWS_OK: Final = "news.ok"
+
 # --- Endergebnis ------------------------------------------------------------
 DECISION_TRADE: Final = "decision.trade"
 DECISION_NO_TRADE: Final = "decision.no_trade"
@@ -131,6 +139,9 @@ ALL_CODES: Final[tuple[str, ...]] = (
     WINDOW_VOLATILITY_LOW,
     WINDOW_VOLATILITY_HIGH,
     WINDOW_OK,
+    NEWS_BLACKOUT,
+    NEWS_NO_DATA,
+    NEWS_OK,
     DECISION_TRADE,
     DECISION_NO_TRADE,
     DATA_WARMUP,

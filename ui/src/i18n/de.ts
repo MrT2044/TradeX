@@ -132,6 +132,15 @@ export const reasonText: Record<string, (p: ReasonParams) => string> = {
   'window.volatility_high': (p) =>
     `Zu volatil: ${num(p.atr_ticks, 0)} Ticks Schwankungsbreite, hoechstens ${p.max} erlaubt`,
 
+  'news.ok': (p) =>
+    p.enabled === false
+      ? 'Nachrichtenfilter ist abgeschaltet'
+      : `Kein Termin in Reichweite (${p.events ?? 0} im Kalender)`,
+  'news.blackout': (p) =>
+    `Nachrichtensperre: ${p.event} (${p.impact}), noch ${num(p.minuten_bis_ende, 0)} Minuten`,
+  'news.no_data': () =>
+    'Nachrichtenfilter aktiv, aber fuer diesen Zeitpunkt liegen keine Termine vor',
+
   'decision.trade': (p) =>
     `${p.side}: Einstieg ${price(p.entry)}, Stop ${price(p.stop)}, Ziel ${price(p.target)}, CRV ${num(p.rr, 2)}, ${p.quantity} Kontrakt(e)`,
   'decision.no_trade': (p) =>
@@ -174,6 +183,8 @@ export const reasonLabel: Record<string, string> = {
   'window.session_blocked': 'Session nicht freigegeben',
   'window.volatility_low': 'Zu geringe Schwankungsbreite',
   'window.volatility_high': 'Zu hohe Schwankungsbreite',
+  'news.blackout': 'Nachrichtensperre',
+  'news.no_data': 'Keine Termindaten',
   'decision.no_trade': 'Setup unvollstaendig',
 };
 
