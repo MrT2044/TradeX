@@ -117,6 +117,12 @@ def main() -> int:
     parser.add_argument("--no-save", action="store_true", help="nicht in der Datenbank festhalten")
     args = parser.parse_args()
 
+    # Zeilenweise ausgeben statt gepuffert. Wird die Ausgabe in eine Datei
+    # umgeleitet - der Normalfall fuer einen Lauf ueber Stunden -, sammelt
+    # Python sonst kiloweise Text und schreibt ihn erst am Ende. Man saehe
+    # einer laufenden Sitzung stundenlang beim Nichtstun zu.
+    sys.stdout.reconfigure(line_buffering=True)
+
     config = get_config()
     setup_logging("WARNING", config.path(config.data.log_dir))
 
