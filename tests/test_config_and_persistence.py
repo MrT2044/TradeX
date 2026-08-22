@@ -37,6 +37,24 @@ def test_default_config_laedt(config: Config):
     )
 
 
+def test_musterstatistik_liest_ihre_schwellen_aus_der_datei(config: Config):
+    """Die drei Schwellen der Musterstatistik stehen in der YAML, nicht im Code.
+
+    Sie entscheiden zwar nicht, WAS gehandelt wird - aber sehr wohl, was der
+    Bericht als Fund ausweisen darf. Ein im Code versteckter alpha-Wert waere
+    ein Schwellenwert wie jeder andere (Invariante 4).
+    """
+    raw = yaml.safe_load((PROJECT_ROOT / "config" / "default.yaml").read_text(encoding="utf-8"))
+    # Gegen die DATEI geprueft, nicht nur gegen das geladene Objekt: sonst
+    # bestuende der Test auch dann, wenn die Werte ausschliesslich als
+    # pydantic-Vorgabe existierten und in der YAML gar nicht auftauchten.
+    assert raw["patterns"] == {
+        "alpha": config.patterns.alpha,
+        "min_trades": config.patterns.min_trades,
+        "min_out_of_sample_trades": config.patterns.min_out_of_sample_trades,
+    }
+
+
 def test_messkonfiguration_weicht_nur_beim_konto_ab():
     """`backtest_edge.yaml` darf sich NUR in `risk.account_size` unterscheiden.
 

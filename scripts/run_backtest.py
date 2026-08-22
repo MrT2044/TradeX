@@ -31,6 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from tradex.backtest import patterns
 from tradex.backtest.report import build, render_text, to_dict
 from tradex.backtest.runner import run_multi_backtest
 from tradex.backtest.store import BacktestStore
@@ -71,6 +72,11 @@ def main() -> int:
         "--save", action="store_true", help="Lauf in der Datenbank festhalten (Spec §21)"
     )
     parser.add_argument("--notes", default="", help="Notiz zum gespeicherten Lauf")
+    parser.add_argument(
+        "--muster",
+        action="store_true",
+        help="Musterstatistik anhaengen: bedingte Verteilungen mit Mehrfachtest-Korrektur",
+    )
     parser.add_argument("--max-bars", type=int, default=2_000_000)
     parser.add_argument("--quiet", action="store_true", help="ohne Fortschrittsanzeige")
     args = parser.parse_args()
@@ -108,6 +114,27 @@ def main() -> int:
 
     report = build(result, config)
     print(render_text(report))
+
+    if args.muster:
+        # Bewusst hinter dem Hauptbericht und nur auf Anforderung: die
+        # Aufschluesselungen oben beantworten "woher kam es", die
+        # Musterstatistik beantwortet "haelt davon etwas einer Pruefung stand".
+        # Wer sie unaufgefordert bekaeme, laese sie als Empfehlung.
+        print()
+        print(
+            patterns.render_text(
+                patterns.analyse(
+                    # `result.trades`, nicht `report.trades`: der Bericht ist auf
+                    # `max_report_trades` gekuerzt, eine Statistik darueber waere
+                    # stillschweigend nur der Schluss des Zeitraums.
+                    result.trades,
+                    out_of_sample_fraction=config.backtest.out_of_sample_fraction,
+                    alpha=config.patterns.alpha,
+                    min_trades=config.patterns.min_trades,
+                    min_oos_trades=config.patterns.min_out_of_sample_trades,
+                )
+            )
+        )
 
     if args.out:
         args.out.write_text(

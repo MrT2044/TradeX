@@ -358,6 +358,26 @@ class BacktestConfig(_Frozen):
     max_report_trades: int = Field(default=500, ge=1)
 
 
+class PatternsConfig(_Frozen):
+    """Musterstatistik: bedingte Verteilungen ueber die Trades eines Laufs.
+
+    Die Werte hier entscheiden nicht, WAS gehandelt wird - sie entscheiden,
+    ab wann eine Auffaelligkeit ueberhaupt berichtet werden darf.
+    """
+
+    #: Zulaessige Rate falscher Funde nach Benjamini-Hochberg.
+    alpha: float = Field(default=0.05, gt=0, lt=1)
+
+    #: Mindestgroesse einer Untergruppe, damit sie getestet wird. Darunter ist
+    #: der t-Test eine Schaetzung mit eigener Unsicherheit, und jede getestete
+    #: Gruppe verschaerft ausserdem die Korrektur fuer alle anderen.
+    min_trades: int = Field(default=30, ge=2)
+
+    #: Mindestgroesse derselben Gruppe im hinteren Abschnitt, damit deren
+    #: Vorzeichen als Gegenprobe zaehlt.
+    min_out_of_sample_trades: int = Field(default=10, ge=1)
+
+
 class ExecutionConfig(_Frozen):
     mode: TradingMode = TradingMode.ANALYSIS_ONLY
     live_trading_enabled: bool = False
@@ -390,6 +410,7 @@ class Config(_Frozen):
     trading_windows: TradingWindowsConfig = TradingWindowsConfig()
     risk: RiskConfig = RiskConfig()
     backtest: BacktestConfig = BacktestConfig()
+    patterns: PatternsConfig = PatternsConfig()
     execution: ExecutionConfig = ExecutionConfig()
     news: NewsConfig = NewsConfig()
 

@@ -291,6 +291,41 @@ Jeder Lauf lässt sich mit `--save` festhalten. Gespeichert werden Kennzahlen,
 Einzeltrades **und** der `config_hash` — ohne den wären zwei Ergebnisse nicht
 vergleichbar, sondern nur zwei Zahlen (Spec §21).
 
+### Musterstatistik statt Mustersuche
+
+```bash
+python scripts/run_backtest.py --symbol MNQ_PROXY --from 2023-01-01 --muster
+```
+
+Die Aufschlüsselungen des Berichts — nach Session, Richtung, Wochentag —
+verleiten zu genau einem Fehler: „RTH bringt +0,4 R, also handeln wir nur noch
+RTH." Zwölf Trades reichen für diese Zahl, und wer acht Aufschlüsselungen
+anschaut, findet die beste davon fast garantiert im Zufall.
+
+`--muster` beantwortet dieselbe Frage mit dem Verfahren, das sie beantworten
+kann:
+
+1. Jede Untergruppe wird gegen „Erwartungswert null" getestet (t-Test, mit
+   Vertrauensband).
+2. **Alle Tests zusammen** bekommen eine Mehrfachtest-Korrektur nach
+   Benjamini-Hochberg. Bei zwanzig Untergruppen und 5 % Niveau ist *ein*
+   Zufallstreffer die Erwartung, nicht die Ausnahme — die Korrektur rechnet
+   diese Erwartung heraus.
+3. Getestet wird nur der **vordere** Teil des Zeitraums. Der hintere bleibt
+   unangetastet und dient als Gegenprobe: gleiches Vorzeichen oder nicht.
+
+Bedingungen sind ausschließlich Merkmale, die **beim Einstieg feststanden**.
+„Trades, die am Ziel schlossen, laufen besser" ist wahr und wertlos. Ein Test
+erzwingt das strukturell: er reicht den Bedingungen einen Trade herein, der
+seine Ergebnisfelder verweigert.
+
+Gruppen unter 30 Trades werden angezeigt, aber nicht getestet — und zählen
+deshalb auch nicht in die Korrektur hinein, sonst verwässerten Splittergruppen
+jeden echten Fund. Alle drei Schwellen stehen unter `patterns:` in
+`config/default.yaml`.
+
+Was überlebt, ist eine **Hypothese für den nächsten Zeitraum**, kein Befund.
+
 ### Was hier bewusst nicht passiert
 
 **Keine Parameteroptimierung.** Ein Suchlauf über Schwellenwerte findet

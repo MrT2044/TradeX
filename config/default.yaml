@@ -315,6 +315,20 @@ backtest:
 #  damit die Werte nie im Code landen.
 # ============================================================================
 
+patterns:        # Musterstatistik ueber die Trades eines Backtests
+  # Zulaessige Rate falscher Funde (Benjamini-Hochberg). Ohne Korrektur liefert
+  # eine Auswertung mit zwanzig Untergruppen im Schnitt eine "signifikante",
+  # auch wenn gar kein Effekt existiert.
+  alpha: 0.05
+
+  # Ab dieser Gruppengroesse wird ueberhaupt getestet. Kleinere Gruppen stehen
+  # im Bericht, zaehlen aber nicht als Hypothese.
+  min_trades: 30
+
+  # So viele Trades braucht dieselbe Gruppe im hinteren Abschnitt, damit ihr
+  # Vorzeichen dort als Gegenprobe zaehlt.
+  min_out_of_sample_trades: 10
+
 execution:       # Phase 5/8/9 - Spec §18
   mode: analysis_only         # analysis_only | paper_manual | paper_auto
                               # | live_manual | live_auto
