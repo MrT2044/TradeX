@@ -7,6 +7,7 @@ unterschiedliche Ergebnisse, und genau das soll dieses Projekt nicht haben.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator
 from datetime import timedelta
 from pathlib import Path
@@ -23,6 +24,7 @@ from tradex.config import load_config
 from tradex.data.store import BarStore
 from tradex.domain.bars import BarSeries, to_ns
 from tradex.domain.enums import Timeframe
+from tradex.logging_setup import get_logger
 from tradex.service import STRATEGY_VERSION, TradexService
 
 SYMBOL = "MNQ_DEMO"
@@ -258,7 +260,27 @@ def test_backtest_ohne_lauf_erklaert_sich(client: TestClient):
 def test_logs(client: TestClient):
     entries = client.get("/api/logs?limit=50").json()
     assert isinstance(entries, list)
-    # Der UI-Puffer darf keine Eintraege mehrfach enthalten - er haengt bewusst
-    # nur in der structlog-Kette und nicht in der foreign_pre_chain der Handler.
-    events = [f"{e['timestamp']}|{e['event']}" for e in entries]
-    assert len(events) == len(set(events))
+
+
+def test_ui_puffer_zaehlt_jedes_ereignis_genau_einmal(client: TestClient):
+    """Der UI-Puffer haengt nur in der structlog-Kette, nicht je Handler.
+
+    Geprueft wird die Eigenschaft selbst statt der frueheren Naeherung "keine
+    zwei Eintraege mit gleichem Zeitstempel und Text". Die war unter Windows
+    falsch: die Systemuhr springt dort in Schritten von rund 15 ms, zwei
+    unabhaengige gleichnamige Ereignisse bekommen also regelmaessig denselben
+    Zeitstempel - der Test schlug zufaellig fehl, ohne dass etwas doppelt war.
+    """
+    marker = "test_ui_puffer_marker"
+    get_logger(__name__).info(marker, quelle="structlog")
+
+    # Ein fremder Logrecord (so kommt uvicorn herein). Er laeuft ueber die
+    # foreign_pre_chain der Handler - dort haengt der Puffer bewusst NICHT,
+    # sonst stuende jede HTTP-Zugriffszeile im Protokoll des UI, und zwar
+    # einmal je Handler.
+    logging.getLogger("uvicorn.access").info("test_ui_puffer_fremd")
+
+    entries = client.get("/api/logs?limit=200").json()
+    events = [entry["event"] for entry in entries]
+    assert events.count(marker) == 1
+    assert "test_ui_puffer_fremd" not in events
