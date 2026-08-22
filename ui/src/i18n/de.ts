@@ -141,6 +141,9 @@ export const reasonText: Record<string, (p: ReasonParams) => string> = {
   'news.no_data': () =>
     'Nachrichtenfilter aktiv, aber fuer diesen Zeitpunkt liegen keine Termine vor',
 
+  'system.halted': (p) =>
+    `Betrieb angehalten (${p.grund}) - keine neuen Positionen, offene laufen weiter`,
+
   'decision.trade': (p) =>
     `${p.side}: Einstieg ${price(p.entry)}, Stop ${price(p.stop)}, Ziel ${price(p.target)}, CRV ${num(p.rr, 2)}, ${p.quantity} Kontrakt(e)`,
   'decision.no_trade': (p) =>
@@ -185,6 +188,7 @@ export const reasonLabel: Record<string, string> = {
   'window.volatility_high': 'Zu hohe Schwankungsbreite',
   'news.blackout': 'Nachrichtensperre',
   'news.no_data': 'Keine Termindaten',
+  'system.halted': 'Betrieb angehalten',
   'decision.no_trade': 'Setup unvollstaendig',
 };
 

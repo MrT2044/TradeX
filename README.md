@@ -114,7 +114,9 @@ Spezifikation: [`bridge_nt8/README.md`](bridge_nt8/README.md).
                   tradex/risk/     ── Größe, Grenzen, Konsistenz
                                   │
                   tradex/backtest/ ── Ausführungssimulation und Statistik
-                                  │
+                       │          └── tradex/live/ ── Papertrading-Betrieb:
+                       │                              dieselbe Ausführung,
+                       │                              Bars aus einem Feed
                      tradex/api/   ── FastAPI + DTOs (einziger UI-Vertrag)
                                   │
                             ui/    ── React + lightweight-charts
@@ -431,9 +433,9 @@ Parallel `python -m tradex.shell --server` laufen lassen.)
 | 2 | Multi-Timeframe-Analyse, alle Detektoren | **fertig** |
 | 3 | Strategy Engine, SL/TP, Risk Management | **fertig** |
 | 4 | Backtesting und Statistik (Spec §19) | **fertig** |
-| **4b** | **Day-Trading-Umbau: Strategie-Registry, mehrere Strategien** | **läuft** |
-| 5 | NinjaTrader Paper Trading (Broker-Anschluss) | offen |
-| 6 | News- und KI-Kontextschicht | offen |
+| **4b** | **Day-Trading-Umbau: Registry, Multi-Instrument, Musterstatistik, News-Filter** | **fertig** |
+| **5** | **Papertrading-Betrieb** | **läuft** — Wiedergabe-Feed fertig, Echtzeit offen |
+| 6 | News- und KI-Kontextschicht | Termine fertig, Schlagzeilen offen |
 | 7 | Dashboard, Kill Switch, Monitoring | offen |
 | 8 | Live Manual | offen |
 | 9 | Live Auto | offen |
@@ -443,18 +445,27 @@ erstmals *gemessen* hat, was die Pflichtkette leistet: 0,25 vollständige Setups
 pro Handelstag, rund 10 Trades im Jahr. Das ist kein Day-Trading-System, und vor
 Phase 4 konnte das niemand wissen — es gab keine Messung. Genau dafür war sie da.
 
-Inhalt von 4b: Strategie-Registry (fertig), Multi-Instrument, News-Filter,
-Musterstatistik.
+### Papertrading läuft — echtes Geld nicht
 
-### Warum Phase 5 wartet
+```bash
+python scripts/run_paper.py --symbol MNQ_PROXY --speed 3600
+```
 
-Der Broker-Anschluss ist der einzige Baustein, der **Geld kostet, wenn die Regel
-verliert**. Aktueller Messstand: Erwartungswert +0,125 R über 147 Trades, das
-95-%-Band reicht von −0,14 bis +0,39 R und schließt null ein. Eine Automatik auf
-dieser Grundlage würde zuverlässig ausführen, was noch nicht nachgewiesen ist.
+Das Programm trifft eigene Entscheidungen, eröffnet und schließt Positionen und
+schreibt jeden Trade sofort in die Datenbank. Es fließt **kein Geld**: es gibt
+keine Order-Anbindung an einen Broker, und `execution.live_trading_enabled`
+bleibt aus (Spec §24).
 
-Die übrigen Bausteine von 4b sind Messwerkzeuge und werden ohnehin gebraucht —
-egal, wie die Edge-Frage ausgeht.
+Der Unterschied ist die ganze Begründung: Papertrading kostet nichts außer Zeit
+und liefert eine zweite, unabhängige Messung derselben Regel. Echtes Geld kostet
+etwas, wenn die Regel verliert — und der aktuelle Messstand (−0,028 R über 685
+Trades, Band −0,14 bis +0,09) weist keinen Edge nach.
+
+`tradex/live/` enthält **keine Regel und keine Füll-Logik.** Ein Papertrade
+entsteht in derselben Klasse wie ein Backtest-Trade; der Unterschied ist nur,
+woher die Bars kommen. Ein Test hält fest, dass beide Wege dieselben Trades
+liefern — an echten Daten geprüft: 48 Trades, +0,300 R, identisch in Backtest
+und Sitzung.
 
 Live Auto darf erst freigeschaltet werden, wenn Paper Trading und Backtesting
 nachweislich funktionieren.

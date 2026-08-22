@@ -60,6 +60,13 @@ class RiskEngine:
         # entscheidet auch, welchen Datenbestand sie sieht - und Backtest wie
         # Live bekommen so nachweislich denselben.
         self.news = news
+        self.halt_reason = ""
+        """Not-Aus des laufenden Betriebs (Spec Paragraph 24). Solange gesetzt,
+        entsteht keine neue Position - offene laufen weiter zu ihrem Stop.
+
+        Bewusst hier und nicht in der Sitzung: eine Sperre, die dadurch wirkt,
+        dass keine Bars mehr eingespeist werden, laesst offene Positionen ohne
+        Stopueberwachung zurueck. Im Backtest ist das Feld immer leer."""
 
     # ----------------------------------------------------------- Nachrichten
     def check_news(self, ts: int) -> list[Reason]:
@@ -153,6 +160,12 @@ class RiskEngine:
         saehen dieselbe leere Position und kaemen alle durch (Spec §24,
         Duplicate Order Protection).
         """
+        # Der Not-Aus steht VOR allem anderen, auch vor `risk.enabled`: eine
+        # abgeschaltete Risikopruefung ist eine Testbedingung, ein angehaltener
+        # Betrieb ist ein Zustand der Wirklichkeit.
+        if self.halt_reason:
+            return [Reason(reasons.SYSTEM_HALTED, False, {"grund": self.halt_reason})]
+
         params = self.config.risk
         if not params.enabled:
             return [Reason(reasons.RISK_DISABLED, True, {})]

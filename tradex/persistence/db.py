@@ -179,6 +179,69 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX ix_backtest_trades_run ON backtest_trades (run_id, entry_ts);
         """,
     ),
+    (
+        3,
+        """
+        -- Papertrading-Sitzungen (Phase 5).
+        --
+        -- Getrennt von backtest_runs, obwohl beide Trades derselben Bauart
+        -- enthalten: ein Backtest ist ein abgeschlossener Lauf ueber einen
+        -- bekannten Zeitraum, eine Sitzung laeuft und kann abbrechen. In eine
+        -- Tabelle gezwungen muesste jede Auswertung erst klaeren, was sie
+        -- gerade vor sich hat.
+        CREATE TABLE sessions (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            started_utc      TEXT    NOT NULL,
+            ended_utc        TEXT,               -- NULL = laeuft noch oder abgestuerzt
+            mode             TEXT    NOT NULL,   -- paper_manual | paper_auto | ...
+            feed             TEXT    NOT NULL,   -- replay | nt8 | ...
+            symbols          TEXT    NOT NULL,
+            config_hash      TEXT    NOT NULL,
+            strategy_version TEXT    NOT NULL,
+            backtest_version TEXT    NOT NULL,
+            start_equity     REAL    NOT NULL,
+            notes            TEXT    NOT NULL DEFAULT ''
+        );
+        CREATE INDEX ix_sessions_started ON sessions (started_utc);
+
+        -- Trades einer Sitzung. Bewusst dieselben Spalten wie backtest_trades
+        -- plus `session_id`: beide entstehen aus demselben SimulatedTrade, und
+        -- nur so lassen sich Papertrades und Backtest direkt vergleichen -
+        -- die eigentliche Pruefung von "Backtest = Live".
+        CREATE TABLE session_trades (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id     INTEGER NOT NULL REFERENCES sessions (id) ON DELETE CASCADE,
+            trade_id       INTEGER NOT NULL,
+            setup_id       INTEGER NOT NULL,
+            symbol         TEXT    NOT NULL,
+            strategy       TEXT    NOT NULL,
+            direction      TEXT    NOT NULL,
+            session_name   TEXT    NOT NULL,
+            trading_day    INTEGER NOT NULL,
+            signal_ts      INTEGER NOT NULL,
+            entry_ts       INTEGER NOT NULL,
+            exit_ts        INTEGER NOT NULL,
+            entry_price    REAL    NOT NULL,
+            exit_price     REAL    NOT NULL,
+            stop           REAL    NOT NULL,
+            target         REAL    NOT NULL,
+            quantity       INTEGER NOT NULL,
+            exit_reason    TEXT    NOT NULL,
+            bars_held      INTEGER NOT NULL,
+            planned_rr     REAL    NOT NULL,
+            risk_amount    REAL    NOT NULL,
+            pnl            REAL    NOT NULL,
+            commission     REAL    NOT NULL,
+            r_multiple     REAL    NOT NULL,
+            mae_r          REAL    NOT NULL,
+            mfe_r          REAL    NOT NULL,
+            stop_anchor    TEXT    NOT NULL,
+            target_source  TEXT    NOT NULL,
+            htf_bias       TEXT    NOT NULL
+        );
+        CREATE INDEX ix_session_trades_session ON session_trades (session_id, entry_ts);
+        """,
+    ),
 ]
 
 CURRENT_SCHEMA_VERSION = MIGRATIONS[-1][0]

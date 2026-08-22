@@ -95,6 +95,9 @@ DATA_WARMUP: Final = "data.warmup"
 DATA_GAP: Final = "data.gap"
 DATA_ROLL: Final = "data.roll_boundary"
 MARKET_CLOSED: Final = "market.closed"
+SYSTEM_HALTED: Final = "system.halted"
+"""Not-Aus des laufenden Betriebs. Keine neuen Positionen; offene laufen
+weiter zu ihrem Stop."""
 
 #: Alle bekannten Codes - `tests/test_reasons.py` prueft, dass fuer jeden davon
 #: eine deutsche Uebersetzung existiert.
@@ -148,4 +151,5 @@ ALL_CODES: Final[tuple[str, ...]] = (
     DATA_GAP,
     DATA_ROLL,
     MARKET_CLOSED,
+    SYSTEM_HALTED,
 )

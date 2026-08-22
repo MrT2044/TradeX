@@ -19,7 +19,7 @@ Arbeitshinweise für dieses Repository. Was das Projekt *ist*, steht im
 |---|---|
 | fertig | Registry, Multi-Instrument, Musterstatistik, News-Filter (Termine) |
 | offen | News-Filter (Schlagzeilen) — braucht erst eine Messung, siehe unten |
-| wartet | Phase 5 — Broker-Anschluss über NinjaTrader |
+| **Phase 5 läuft** | Papertrading-Betrieb steht; Echtzeit-Feed offen |
 
 Phase 4b stand **nicht im ursprünglichen Plan**. Phase 4 hat sie erzwungen: sie
 hat erstmals *gemessen*, dass die Pflichtkette nur ~10 Trades im Jahr erzeugt.
@@ -60,8 +60,15 @@ Wer die Zahlen oben nachrechnen will, muss `TRADEX_CONFIG` setzen; sonst sieht
 es aus, als sei etwas kaputt.
 
 **Es gibt bis heute keinen nachgewiesenen Edge.** Jedes Vertrauensband schließt
-null ein. Das ist kein Grund aufzuhören — es ist der Grund, warum Phase 5
-wartet: Sie ist der einzige Baustein, der Geld kostet, wenn die Regel verliert.
+null ein.
+
+Das ist kein Grund aufzuhören — aber es bestimmt, welcher Schritt als nächster
+erlaubt ist. **Papertrading kostet nichts außer Zeit**, deshalb läuft es
+(Phase 5, siehe unten): es prüft die Mechanik des Betriebs und liefert eine
+zweite, unabhängige Messung derselben Regel. **Echtes Geld wartet weiter.**
+`execution.live_trading_enabled` ist aus und braucht eine zweite ausdrückliche
+Bestätigung (Spec §24, Phase 8/9). Der Unterschied ist der ganze Punkt: der
+eine Schritt kostet nichts, wenn die Regel verliert, der andere schon.
 
 Wer hier etwas baut, baut Messwerkzeuge, bis diese Frage beantwortet ist.
 
@@ -80,7 +87,7 @@ UI beim ersten Start, öffnet das Fenster; Argumente werden durchgereicht).
 reine LF-Dateien nur teilweise verarbeitet und `goto` dabei still bricht.
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/ -q      # Tests (aktuell 364)
+.\.venv\Scripts\python.exe -m pytest tests/ -q      # Tests (aktuell 422)
 .\.venv\Scripts\python.exe -m ruff check tradex tests scripts
 .\.venv\Scripts\python.exe -m tradex.shell          # Desktop-Fenster
 .\.venv\Scripts\python.exe -m tradex.shell --server # nur Engine, Port 8765
@@ -217,6 +224,77 @@ Zwei Pflichtglieder filtern je rund 89 %, multipliziert 1,3 %. **Das ist
 Arithmetik, kein Fehler** — kein Schwellenwert ändert daran etwas. Für tägliche
 Trades braucht es weitere Strategien *neben* ihr, nicht schnellere Werte *in*
 ihr.
+
+---
+
+## Phase 5: das Programm handelt selbst
+
+```powershell
+.\.venv\Scripts\python.exe scripts\run_paper.py --symbol MNQ_PROXY --speed 3600
+```
+
+Es entstehen echte Entscheidungen und vollständig durchsimulierte Trades — mit
+Schlupf, Gebühren, „Stop zuerst". Es fließt **kein Geld**: es gibt keine
+Order-Anbindung an einen Broker, und `execution.live_trading_enabled` bleibt
+aus (Spec §24, Phase 8/9).
+
+### Warum das kein zweites Programm ist
+
+`tradex/live/` enthält **keine Analyse, keine Regel, keine Füll-Logik, keine
+Positionsgröße.** All das kommt aus `SymbolBook` — genau der Klasse, die auch
+den Backtest führt. Backtest und Papertrading sind nicht „zwei Wege, die
+dasselbe tun sollen", sondern derselbe Weg mit verschiedenen Bar-Quellen: der
+Backtest zieht Bars aus einer Datei, die Sitzung aus einem Feed.
+
+Der Test `test_papertrading_faellt_dieselben_entscheidungen_wie_der_backtest`
+hält das fest — Trades Feld für Feld, Entscheidungen Zeitstempel für
+Zeitstempel. **Fällt er, sagt kein Backtest mehr etwas über den Betrieb aus.**
+
+An echten Daten geprüft (MNQ_PROXY, Q1 2024, Messkonfiguration): Sitzung und
+Backtest liefern beide 48 Trades, +0,300 R, +847,76 USD. Und über Juni 2026
+beide *null* Signale — die Übereinstimmung gilt in beide Richtungen.
+
+### Was die Sitzung beiträgt
+
+Vier Dinge, die ein Backtest nicht braucht:
+
+1. **Bars kommen einzeln und unvorhersehbar.** Doppelte oder rückwärts
+   laufende Bars (nach einem Feed-Neustart) werden verworfen — zweimal
+   analysiert sähen die Detektoren einen Verlauf, den es nie gab.
+2. **Der Feed kann ausfallen**, und Stille ist von einem ruhigen Markt nicht zu
+   unterscheiden. Nur der Blick auf die Uhr trennt beides, deshalb läuft
+   `check_liveness()` in jedem Durchgang — auch wenn nichts passiert.
+3. **Ergebnisse müssen sofort haltbar sein.** Jede Sitzung bekommt ihre Zeile
+   beim Start, jeder Trade wird beim Schließen geschrieben. Eine Sitzung ohne
+   `ended_utc` ist eine laufende oder eine abgestürzte.
+4. **Es braucht einen Not-Aus.**
+
+### Der Not-Aus — die wichtigste Einzelentscheidung
+
+Angehalten wird über die Risk Engine (`halt_reason`), **nicht** dadurch, dass
+keine Bars mehr eingespeist werden. Eine angehaltene Sitzung verarbeitet Bars
+weiter und führt offene Positionen zu Ende; sie nimmt nur keine neuen auf.
+
+Wer stattdessen die Bars abklemmt, lässt offene Positionen **ohne
+Stopüberwachung** zurück — die gefährlichste denkbare Reaktion auf eine
+Störung. Ein Test hält beides fest.
+
+Ebenso: **jede Sitzung beginnt angehalten** (`not_connected`) und wird erst
+handlungsfähig, wenn der Feed sich gemeldet hat. Die Umkehrung fällt nicht auf
+— eine Sitzung, die Bars aus einer nie bestätigten Quelle handelt, sieht von
+außen normal aus.
+
+### Feeds
+
+| Feed | Stand | Daten |
+|---|---|---|
+| `replay` | fertig | lokaler Bestand, beschleunigt oder in Echtzeit |
+| `nt8` | offen | NinjaTrader + AddOn aus `bridge_nt8/` |
+
+Die Wiedergabe ist **kein Ersatz für echte Daten** — sie prüft die Mechanik des
+Betriebs (Ausfallerkennung, Not-Aus, Persistenz) deterministisch und kostenlos.
+Genau das sieht `bridge_nt8/README.md` als ersten Schritt vor. Jede gespeicherte
+Sitzung trägt deshalb ihren Feed-Namen.
 
 ---
 
@@ -393,6 +471,7 @@ Gegen sich selbst geprüft wäre eine eigene Implementierung wertlos.
 .\.venv\Scripts\python.exe scripts\run_backtest.py --symbol MNQ_PROXY,MES_PROXY --save
 .\.venv\Scripts\python.exe scripts\run_backtest.py --symbol MNQ_PROXY --muster
 .\.venv\Scripts\python.exe scripts\fetch_news.py --source forexfactory
+.\.venv\Scripts\python.exe scripts\run_paper.py --symbol MNQ_PROXY --speed 3600
 ```
 
 `run_backtest.py` liefert **Rückgabewert 2**, wenn kein einziger Trade zustande
@@ -494,6 +573,11 @@ tradex/backtest/    execution.py    wie ein Signal gefüllt und beendet worden w
                     patterns.py     bedingte Verteilungen: hält davon etwas stand?
                     report.py       Bündelung, Einordnung, Ausgabe
                     store.py        Laufarchiv
+tradex/live/        feed.py         was ein Live-Feed liefern darf: nur GESCHLOSSENE Bars
+                    replay_feed.py  gespeicherte Bars als Feed — deterministisch, gratis
+                    session.py      Zustandsmaschine: Bars rein, Papertrades raus
+                    runner.py       die Schleife: Zeit, Stille, Abbruch
+                    store.py        Sitzung und Trades SOFORT haltbar machen
 tradex/api/         FastAPI + DTOs = einziger UI-Vertrag
 tradex/service.py   Anwendungsschicht (Laden, Replay-Cursor, Protokoll)
 ui/                 React + lightweight-charts v5, deutsch
