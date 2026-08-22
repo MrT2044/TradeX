@@ -52,6 +52,8 @@ class BacktestReport:
     by_strategy: dict[str, M.Metrics]
     """Die wichtigste Aufschluesselung, sobald mehrere Strategien laufen:
     welche hat das Ergebnis getragen, welche nur Gebuehren produziert?"""
+    by_symbol: dict[str, M.Metrics]
+    """Bei mehreren Instrumenten: traegt die Regel ueberall oder nur auf einem?"""
     by_session: dict[str, M.Metrics]
     by_direction: dict[str, M.Metrics]
     by_exit: dict[str, M.Metrics]
@@ -102,6 +104,7 @@ def build(result: BacktestResult, config: Config) -> BacktestReport:
         trades=tuple(trades[-limit:]),
         trades_total=len(trades),
         by_strategy=M.breakdown(trades, lambda t: t.strategy, start_equity),
+        by_symbol=M.breakdown(trades, lambda t: t.symbol, start_equity),
         by_session=M.breakdown(trades, lambda t: t.session, start_equity),
         by_direction=M.breakdown(trades, lambda t: t.side, start_equity),
         by_exit=M.breakdown(trades, lambda t: t.exit_reason.value, start_equity),
@@ -229,6 +232,7 @@ def to_dict(report: BacktestReport) -> dict:
         "in_sample": asdict(report.in_sample),
         "out_of_sample": asdict(report.out_of_sample),
         "by_strategy": {k: asdict(v) for k, v in report.by_strategy.items()},
+        "by_symbol": {k: asdict(v) for k, v in report.by_symbol.items()},
         "by_session": {k: asdict(v) for k, v in report.by_session.items()},
         "by_direction": {k: asdict(v) for k, v in report.by_direction.items()},
         "by_exit": {k: asdict(v) for k, v in report.by_exit.items()},
@@ -310,6 +314,9 @@ def render_text(report: BacktestReport) -> str:
 
     for title, table in (
         ("Nach Strategie", report.by_strategy),
+        # Nur zeigen, wenn es ueberhaupt mehrere gibt - eine einzeilige Tabelle
+        # mit dem Gesamtergebnis waere reine Wiederholung.
+        ("Nach Instrument", report.by_symbol if len(report.by_symbol) > 1 else {}),
         ("Nach Session", report.by_session),
         ("Nach Richtung", report.by_direction),
         ("Nach Ausstiegsart", report.by_exit),

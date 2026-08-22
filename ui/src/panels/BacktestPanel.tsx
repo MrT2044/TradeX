@@ -143,6 +143,13 @@ function Report({ report }: { report: BacktestReport }) {
             ])}
           />
 
+          {Object.keys(report.by_symbol).length > 1 && (
+            <>
+              <h3 className="panel__subtitle">{de.backtest.bySymbol}</h3>
+              <Table rows={Object.entries(report.by_symbol)} />
+            </>
+          )}
+
           <h3 className="panel__subtitle">{de.backtest.bySession}</h3>
           <Table
             rows={Object.entries(report.by_session).map(([name, value]) => [

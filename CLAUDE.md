@@ -64,9 +64,11 @@ Konto**. Drei Regeln dazu:
 2. **Neue Strategien werden in `registry.py` eingetragen — nirgends sonst.**
    Sonst liefe der Backtest irgendwann mit einer anderen Zusammenstellung als
    der Live-Betrieb (Spec §29, eine Ebene höher).
-3. **`setup_id` zählt je Strategie und kollidiert.** Als Schlüssel im
-   Risikobuch dient `trade_id`, kontoweit eindeutig. Hat schon zugeschlagen:
-   Kette #5 und Opening-Range #5 hätten sich gegenseitig geschlossen.
+3. **Der Ledger-Schlüssel wird im Risikobuch vergeben** (`ledger.next_trade_id()`),
+   nicht in Strategie oder Portfolio. Diese Verwechslung ist **zweimal**
+   aufgetreten — erst kollidierten Setup-Nummern zwischen Strategien, dann
+   `trade_id` zwischen Instrumenten. Wer den Zähler dort führt, wo das Konto
+   liegt, kann sie kein drittes Mal bauen.
 
 Eine neue Strategie ist eine **Hypothese**, kein Feature. Sie wird vor der
 ersten Messung festgelegt und danach ehrlich vermessen — auch mit dem Ergebnis

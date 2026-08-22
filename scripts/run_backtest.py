@@ -5,8 +5,12 @@ Pflichtkette aus §7 einen Edge - oder nicht? Der Bericht ist so aufgebaut, dass
 die Antwort "nein" genauso sichtbar wird wie ein "ja".
 
     python scripts/run_backtest.py --symbol MNQ_PROXY
-    python scripts/run_backtest.py --symbol MNQ_PROXY --from 2023-01-01 --to 2024-01-01
+    python scripts/run_backtest.py --symbol MNQ_PROXY,MES_PROXY --from 2023-01-01
     python scripts/run_backtest.py --symbol MNQ_PROXY --out backtest.json --save
+
+Mehrere Symbole laufen an EINEM Konto: die Bars werden chronologisch
+verschraenkt und teilen sich ein Risikobuch. Das ist der einzige Hebel, der die
+Trade-Anzahl erhoeht, ohne eine Regel anzufassen.
 
 Was das Skript NICHT tut
 ------------------------
@@ -28,7 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tradex.backtest.report import build, render_text, to_dict
-from tradex.backtest.runner import run_backtest
+from tradex.backtest.runner import run_multi_backtest
 from tradex.backtest.store import BacktestStore
 from tradex.config import get_config, get_instrument, resolved_config_path
 from tradex.data.integrity import check
@@ -55,7 +59,11 @@ def _progress(done: int, total: int) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--symbol", default="MNQ_PROXY")
+    parser.add_argument(
+        "--symbol",
+        default="MNQ_PROXY",
+        help="ein Symbol oder mehrere durch Komma getrennt (gemeinsames Konto)",
+    )
     parser.add_argument("--from", dest="start", help="Startdatum YYYY-MM-DD (UTC)")
     parser.add_argument("--to", dest="end", help="Enddatum YYYY-MM-DD (UTC), exklusiv")
     parser.add_argument("--out", type=Path, help="Bericht als JSON hierhin schreiben")
@@ -70,26 +78,30 @@ def main() -> int:
     config = get_config()
     setup_logging("WARNING")
 
-    instrument = get_instrument(args.symbol)
+    symbols = [s.strip().upper() for s in args.symbol.split(",") if s.strip()]
+    instruments = {name: get_instrument(name) for name in symbols}
     store = BarStore(config.path(config.data.parquet_dir))
     base_tf = config.data.base_timeframe
 
-    series = store.read(
-        args.symbol, base_tf, _parse_date(args.start), _parse_date(args.end), limit=args.max_bars
-    )
-    if len(series) == 0:
-        print(f"Keine {base_tf.value}-Daten fuer {args.symbol}.")
-        print("Erst importieren: scripts/fetch_dukascopy.py oder scripts/generate_demo_data.py")
-        return 1
+    series_by_symbol = {}
+    for name in symbols:
+        series = store.read(
+            name, base_tf, _parse_date(args.start), _parse_date(args.end), limit=args.max_bars
+        )
+        if len(series) == 0:
+            print(f"Keine {base_tf.value}-Daten fuer {name}.")
+            print("Erst importieren: scripts/fetch_dukascopy.py oder scripts/generate_demo_data.py")
+            return 1
+        series_by_symbol[name] = series
 
-    report_integrity = check(
-        series, args.symbol, base_tf, SessionCalendar(instrument), config.data.min_gap_bars
-    )
-    if not report_integrity.is_clean:
-        print(f"Hinweis Datenqualitaet: {report_integrity.summary()}")
+        report_integrity = check(
+            series, name, base_tf, SessionCalendar(instruments[name]), config.data.min_gap_bars
+        )
+        if not report_integrity.is_clean:
+            print(f"Hinweis Datenqualitaet: {report_integrity.summary()}")
 
-    result = run_backtest(
-        args.symbol, instrument, config, series, progress=None if args.quiet else _progress
+    result = run_multi_backtest(
+        instruments, config, series_by_symbol, progress=None if args.quiet else _progress
     )
     if not args.quiet:
         sys.stderr.write("\r" + " " * 48 + "\r")

@@ -70,7 +70,6 @@ class StrategyPortfolio:
 
         self.decisions: list[StrategyDecision] = []
         self.signals: list[TradeSignal] = []
-        self._next_trade_id = 1
 
     # ------------------------------------------------------------------ Zugriff
     def strategy(self, name: str) -> Strategy:
@@ -86,7 +85,6 @@ class StrategyPortfolio:
         self.ledger.reset()
         self.decisions = []
         self.signals = []
-        self._next_trade_id = 1
 
     # -------------------------------------------------------------------- Lauf
     def on_updates(
@@ -145,10 +143,10 @@ class StrategyPortfolio:
             return self._decision(proposal, "NO_TRADE", collected, None)
 
         position = assessment.position
-        trade_id = self._next_trade_id
-        self._next_trade_id += 1
+        # Die Nummer kommt aus dem Risikobuch: sie muss ueber ALLES eindeutig
+        # sein, was sich das Konto teilt - Strategien wie Instrumente.
         signal = TradeSignal(
-            trade_id=trade_id,
+            trade_id=self.ledger.next_trade_id(),
             setup_id=proposal.setup_id,
             symbol=proposal.symbol,
             direction=proposal.direction,

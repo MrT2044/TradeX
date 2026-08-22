@@ -99,6 +99,37 @@ instruments:
     sessions:
       ny_pm: { start: "12:00", end: "15:15", crosses_midnight: false }
 
+  # S&P-500-Index als CFD von Dukascopy. Zweites Instrument fuer dieselben
+  # Regeln (Phase 4b, Multi-Instrument).
+  #
+  # WARUM EIN ZWEITES INSTRUMENT: Die Strategien laufen unveraendert auf
+  # mehreren Symbolen. Das ist der einzige Hebel, der die Trade-Anzahl linear
+  # erhoeht, OHNE eine Regel anzufassen - und damit der einzige, der die
+  # Stichprobe vergroessert, ohne die Aussage zu veraendern.
+  #
+  # Tick- und Punktwerte sind die des MES (Micro E-mini S&P 500), analog zu
+  # MNQ_PROXY: gemessen wird, wie sich dieselbe Strategie auf einem zweiten
+  # Index verhaelt, bei vergleichbarer Kontraktgroesse.
+  #
+  # ACHTUNG: S&P und Nasdaq sind stark korreliert. Zwei Instrumente liefern
+  # deshalb NICHT die doppelte unabhaengige Stichprobe - die Vertrauensbaender
+  # schrumpfen langsamer als die Trade-Anzahl waechst.
+  MES_PROXY:
+    name: "S&P-500 Index CFD (Dukascopy) - Naeherung fuer MES"
+    databento_dataset: GLBX.MDP3
+    databento_continuous: "MES.c.0"
+    dukascopy_symbol: "USA500IDXUSD"
+    tick_size: 0.25
+    tick_value: 1.25
+    point_value: 5.00
+    contract_size: 1
+    price_decimals: 2
+    # Derselbe Anbieter, dieselbe Handelspause wie beim Nasdaq-CFD.
+    trading_hours:
+      daily_break: { start: "15:15", end: "17:06" }
+    sessions:
+      ny_pm: { start: "12:00", end: "15:15", crosses_midnight: false }
+
   # Synthetische Daten zum Pruefen der Oberflaeche und der Detektoren, solange
   # noch keine echte Historie vorliegt. BEWUSST ein eigenes Symbol: so kann
   # generierter Kursverlauf niemals mit echten Marktdaten verwechselt werden,

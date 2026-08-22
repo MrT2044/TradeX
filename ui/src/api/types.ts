@@ -412,6 +412,8 @@ export interface BacktestReport {
   out_of_sample: Metrics;
   /** Welche Strategie hat das Ergebnis getragen, welche nur Gebuehren produziert? */
   by_strategy: Record<string, Metrics>;
+  /** Bei mehreren Instrumenten: traegt die Regel ueberall oder nur auf einem? */
+  by_symbol: Record<string, Metrics>;
   by_session: Record<string, Metrics>;
   by_direction: Record<string, Metrics>;
   by_exit: Record<string, Metrics>;

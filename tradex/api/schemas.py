@@ -812,6 +812,7 @@ class BacktestReportDto(_Dto):
     out_of_sample: MetricsDto
 
     by_strategy: dict[str, MetricsDto]
+    by_symbol: dict[str, MetricsDto]
     by_session: dict[str, MetricsDto]
     by_direction: dict[str, MetricsDto]
     by_exit: dict[str, MetricsDto]
@@ -848,6 +849,7 @@ class BacktestReportDto(_Dto):
             in_sample=MetricsDto.of(report.in_sample),
             out_of_sample=MetricsDto.of(report.out_of_sample),
             by_strategy=table(report.by_strategy),
+            by_symbol=table(report.by_symbol),
             by_session=table(report.by_session),
             by_direction=table(report.by_direction),
             by_exit=table(report.by_exit),

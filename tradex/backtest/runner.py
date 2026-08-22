@@ -18,6 +18,18 @@ Diese Reihenfolge ist der Grund, warum kein Look-ahead moeglich ist: eine Order
 kann fruehestens auf der Bar nach ihrem Signal gefuellt werden, und ein Ausstieg
 wird immer auf der Bar bewertet, in der er physisch stattfand.
 
+Mehrere Instrumente, EIN Konto
+------------------------------
+Jedes Symbol bekommt ein eigenes `SymbolBook` mit eigener Analyse und eigenen
+Strategien - aber alle teilen sich ein Risikobuch. Das ist der ganze Sinn:
+Tagesverlustlimit und Positionsobergrenze gelten fuer das Konto.
+
+Die Bars werden dafuer STRENG CHRONOLOGISCH verschraenkt. Wuerde man Symbol
+fuer Symbol durchlaufen, saehe das gemeinsame Risikobuch beim zweiten Symbol
+bereits alle Ergebnisse des ersten - ein Jahr Zukunftswissen. Der Einzelfall
+(ein Symbol) ist dabei nur der Sonderfall mit einem Buch, kein zweiter
+Codepfad.
+
 Warum die Position schon beim Signal ins Risikobuch kommt
 ---------------------------------------------------------
 Zwischen Signal und Fuellung liegt eine Bar. Wuerde erst bei der Fuellung
@@ -37,6 +49,7 @@ den es nie gab. `max_signal_age_bars` verwirft solche Signale.
 
 from __future__ import annotations
 
+import heapq
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -48,6 +61,7 @@ from tradex.domain.enums import ExitReason, Timeframe
 from tradex.domain.instruments import Instrument
 from tradex.logging_setup import get_logger
 from tradex.risk.ledger import OpenPosition, RiskLedger
+from tradex.strategy.portfolio import StrategyPortfolio
 from tradex.strategy.registry import build_portfolio
 from tradex.strategy.signal import StrategyDecision, TradeSignal
 
@@ -65,7 +79,11 @@ class BacktestResult:
     """Rohergebnis eines Laufs. Kennzahlen entstehen daraus in `metrics`/`report`."""
 
     symbol: str
+    """Anzeigename - bei mehreren Instrumenten alle, mit '+' verbunden."""
+    symbols: tuple[str, ...]
     instrument: Instrument
+    """Das erste Instrument. Nur fuer Anzeigezwecke; Kennzahlen sind
+    instrumentunabhaengig, weil in R gerechnet wird."""
     base_timeframe: str
     bars: int
     first_ts: int
@@ -84,86 +102,63 @@ class BacktestResult:
     def net_pnl(self) -> float:
         return sum(t.pnl for t in self.trades)
 
+    @property
+    def is_multi_symbol(self) -> bool:
+        return len(self.symbols) > 1
 
-class Backtester:
-    """Fuehrt einen Lauf ueber eine Basis-Bar-Serie durch."""
 
-    def __init__(self, symbol: str, instrument: Instrument, config: Config) -> None:
+class SymbolBook:
+    """Analyse, Strategien und offene Positionen EINES Instruments.
+
+    Haelt bewusst kein eigenes Risikobuch: das gehoert dem Konto und wird von
+    aussen hereingereicht.
+    """
+
+    def __init__(
+        self, symbol: str, instrument: Instrument, config: Config, ledger: RiskLedger
+    ) -> None:
         self.symbol = symbol.upper()
         self.instrument = instrument
         self.config = config
         self.params = config.backtest
+        self.ledger = ledger
 
-        # Ein gemeinsames Risikobuch fuer Strategie und Simulation: nur so
-        # wirken Tagesverlustlimit und Trade-Obergrenze im Backtest wirklich.
-        self.ledger = RiskLedger()
         self.context = MarketContext(self.symbol, instrument, config)
-        self.strategy = build_portfolio(self.symbol, instrument, config, ledger=self.ledger)
+        self.strategy = build_portfolio(self.symbol, instrument, config, ledger=ledger)
 
+        self.trades: list[SimulatedTrade] = []
+        self.unfilled = 0
+        self.stale = 0
         self._open: list[OpenTrade] = []
         self._pending: list[OpenTrade] = []
-        self._trades: list[SimulatedTrade] = []
-        self._unfilled = 0
-        self._stale = 0
-        #: Zusaetzliche Frist ueber die Dauer der Signalbar hinaus, in
-        #: Nanosekunden - siehe `_max_age_ns`.
+        #: Zusaetzliche Frist ueber die Dauer der Signalbar hinaus - siehe `_max_age_ns`.
         self._grace_ns = (
             self.params.max_signal_age_bars * config.data.base_timeframe.seconds * 1_000_000_000
         )
 
-    # -------------------------------------------------------------------- Lauf
-    def run(self, series: BarSeries, progress: ProgressFn | None = None, every: int = 20_000) -> BacktestResult:
-        if len(series) == 0:
-            raise ValueError("Backtest ohne Bars")
+    # -------------------------------------------------------------------- Bar
+    def on_bar(self, bar: Bar, index: int) -> None:
+        """Eine Basis-Bar dieses Symbols verarbeiten."""
+        self._advance(bar, index)
 
-        for index, bar in enumerate(series):
-            self._advance(bar, index)
+        updates = self.context.on_base_bar(bar)
+        if not updates:
+            return
+        for decision in self.strategy.on_updates(updates, self.context):
+            if decision.signal is not None:
+                self._place(decision, bar, index)
 
-            updates = self.context.on_base_bar(bar)
-            if updates:
-                for decision in self.strategy.on_updates(updates, self.context):
-                    if decision.signal is not None:
-                        self._place(decision, bar, index)
+    def finish(self, last_bar: Bar, last_index: int) -> None:
+        """Was am Datenende noch laeuft, sauber abschliessen."""
+        for trade in self._open:
+            self._book(trade.force_close(last_bar, last_index, ExitReason.END_OF_DATA))
+        self._open = []
 
-            if progress and every and index % every == 0:
-                progress(index, len(series))
-
-        self._finish(series[-1], len(series) - 1)
-        if progress:
-            progress(len(series), len(series))
-
-        rejections: dict[str, int] = {}
-        for decision in self.strategy.decisions:
-            if decision.is_trade:
-                continue
-            code = decision.blocking_reason or "unbekannt"
-            rejections[code] = rejections.get(code, 0) + 1
-
-        log.info(
-            "backtest_finished",
-            symbol=self.symbol,
-            bars=len(series),
-            signals=len(self.strategy.signals),
-            trades=len(self._trades),
-            stale=self._stale,
-            net_pnl=round(sum(t.pnl for t in self._trades), 2),
-        )
-
-        return BacktestResult(
-            symbol=self.symbol,
-            instrument=self.instrument,
-            base_timeframe=self.config.data.base_timeframe.value,
-            bars=len(series),
-            first_ts=series[0].ts,
-            last_ts=series[-1].ts,
-            start_equity=self.config.risk.account_size,
-            trades=tuple(self._trades),
-            decisions=tuple(self.strategy.decisions),
-            signals=len(self.strategy.signals),
-            unfilled=self._unfilled,
-            stale=self._stale,
-            rejections=dict(sorted(rejections.items(), key=lambda kv: kv[1], reverse=True)),
-        )
+        for trade in self._pending:
+            # Nie gefuellt - die Order zaehlt nicht als genommener Trade.
+            self.ledger.cancel_position(trade.trade_id, trade.trading_day)
+            self.unfilled += 1
+        self._pending = []
 
     # ------------------------------------------------------------- Positionen
     def _advance(self, bar: Bar, index: int) -> None:
@@ -175,7 +170,7 @@ class Backtester:
                     # Order wird verworfen statt zu einem erfundenen Kurs
                     # gefuellt.
                     self.ledger.cancel_position(trade.trade_id, trade.trading_day)
-                    self._stale += 1
+                    self.stale += 1
                     continue
                 trade.fill(bar, index)
                 self._sync_ledger_entry(trade)
@@ -201,10 +196,11 @@ class Backtester:
         # Ist das Signal schon bei der Ordererteilung veraltet, entstand es vor
         # einer Luecke. Es wird gar nicht erst gebucht.
         if bar.ts - signal.entry_ts > self._max_age_ns(signal):
-            self._stale += 1
+            self.stale += 1
             log.info(
                 "signal_stale",
                 symbol=self.symbol,
+                strategy=signal.strategy,
                 setup=signal.setup_id,
                 gap_minutes=round((bar.ts - signal.entry_ts) / 60e9),
             )
@@ -267,22 +263,156 @@ class Backtester:
             position.entry_ts = trade.entry_ts
 
     def _book(self, trade: SimulatedTrade) -> None:
-        self._trades.append(trade)
+        self.trades.append(trade)
         self.ledger.close_position(
             trade.trade_id, trade.exit_ts, trade.pnl, trade.trading_day
         )
 
-    def _finish(self, last_bar: Bar, last_index: int) -> None:
-        """Was am Datenende noch laeuft, sauber abschliessen."""
-        for trade in self._open:
-            self._book(trade.force_close(last_bar, last_index, ExitReason.END_OF_DATA))
-        self._open = []
 
-        for trade in self._pending:
-            # Nie gefuellt - die Order zaehlt nicht als genommener Trade.
-            self.ledger.cancel_position(trade.trade_id, trade.trading_day)
-            self._unfilled += 1
-        self._pending = []
+class Backtester:
+    """Fuehrt einen Lauf ueber ein oder mehrere Instrumente durch."""
+
+    def __init__(
+        self,
+        symbol: str | None = None,
+        instrument: Instrument | None = None,
+        config: Config | None = None,
+        instruments: dict[str, Instrument] | None = None,
+    ) -> None:
+        if config is None:
+            raise ValueError("Backtester braucht eine Konfiguration")
+        if instruments is None:
+            if symbol is None or instrument is None:
+                raise ValueError("Entweder (symbol, instrument) oder instruments angeben")
+            instruments = {symbol.upper(): instrument}
+
+        self.config = config
+        self.params = config.backtest
+        # EIN Risikobuch fuer alle Instrumente - das ist der Sinn der Sache.
+        self.ledger = RiskLedger()
+        self.books = {
+            name.upper(): SymbolBook(name, item, config, self.ledger)
+            for name, item in instruments.items()
+        }
+
+    # ------------------------------------------------------------- Bequemlichkeit
+    @property
+    def symbol(self) -> str:
+        return next(iter(self.books))
+
+    @property
+    def strategy(self) -> StrategyPortfolio:
+        """Das Portfolio des ersten Symbols - fuer den Einzelfall."""
+        return next(iter(self.books.values())).strategy
+
+    @property
+    def context(self) -> MarketContext:
+        return next(iter(self.books.values())).context
+
+    # -------------------------------------------------------------------- Lauf
+    def run(
+        self, series: BarSeries, progress: ProgressFn | None = None, every: int = 20_000
+    ) -> BacktestResult:
+        """Einzelnes Instrument - der Sonderfall von `run_many` mit einem Buch."""
+        return self.run_many({self.symbol: series}, progress, every)
+
+    def run_many(
+        self,
+        series_by_symbol: dict[str, BarSeries],
+        progress: ProgressFn | None = None,
+        every: int = 20_000,
+    ) -> BacktestResult:
+        """Mehrere Instrumente an einem Konto, streng chronologisch verschraenkt."""
+        prepared = {name.upper(): s for name, s in series_by_symbol.items()}
+        unknown = set(prepared) - set(self.books)
+        if unknown:
+            raise ValueError(f"Keine Buecher fuer: {', '.join(sorted(unknown))}")
+        if not prepared or all(len(s) == 0 for s in prepared.values()):
+            raise ValueError("Backtest ohne Bars")
+
+        total = sum(len(s) for s in prepared.values())
+        last_seen: dict[str, tuple[Bar, int]] = {}
+
+        for done, (symbol, index, bar) in enumerate(_merge(prepared), start=1):
+            self.books[symbol].on_bar(bar, index)
+            last_seen[symbol] = (bar, index)
+            if progress and every and done % every == 0:
+                progress(done, total)
+
+        for symbol, (bar, index) in last_seen.items():
+            self.books[symbol].finish(bar, index)
+        if progress:
+            progress(total, total)
+
+        return self._collect(prepared, total)
+
+    # ------------------------------------------------------------- Auswertung
+    def _collect(self, prepared: dict[str, BarSeries], total: int) -> BacktestResult:
+        books = [self.books[name] for name in prepared]
+        trades = sorted(
+            (t for book in books for t in book.trades), key=lambda t: t.exit_ts
+        )
+        decisions = sorted(
+            (d for book in books for d in book.strategy.decisions), key=lambda d: d.ts
+        )
+
+        rejections: dict[str, int] = {}
+        for decision in decisions:
+            if decision.is_trade:
+                continue
+            code = decision.blocking_reason or "unbekannt"
+            rejections[code] = rejections.get(code, 0) + 1
+
+        names = tuple(sorted(prepared))
+        stale = sum(book.stale for book in books)
+        log.info(
+            "backtest_finished",
+            symbols="+".join(names),
+            bars=total,
+            signals=sum(len(book.strategy.signals) for book in books),
+            trades=len(trades),
+            stale=stale,
+            net_pnl=round(sum(t.pnl for t in trades), 2),
+        )
+
+        non_empty = [s for s in prepared.values() if len(s)]
+        return BacktestResult(
+            symbol="+".join(names),
+            symbols=names,
+            instrument=self.books[names[0]].instrument,
+            base_timeframe=self.config.data.base_timeframe.value,
+            bars=total,
+            first_ts=min(s[0].ts for s in non_empty),
+            last_ts=max(s[-1].ts for s in non_empty),
+            start_equity=self.config.risk.account_size,
+            trades=tuple(trades),
+            decisions=tuple(decisions),
+            signals=sum(len(book.strategy.signals) for book in books),
+            unfilled=sum(book.unfilled for book in books),
+            stale=stale,
+            rejections=dict(sorted(rejections.items(), key=lambda kv: kv[1], reverse=True)),
+        )
+
+
+def _merge(series_by_symbol: dict[str, BarSeries]):
+    """Bars mehrerer Symbole streng chronologisch zusammenfuehren.
+
+    Bei gleichem Timestamp entscheidet der Symbolname - Hauptsache
+    reproduzierbar. Ohne feste Regel haenge das Ergebnis an der zufaelligen
+    Reihenfolge des Dictionarys, sobald die Grenzen knapp sind.
+    """
+    streams = [
+        (series[0].ts, name, 0, series)
+        for name, series in sorted(series_by_symbol.items())
+        if len(series)
+    ]
+    heapq.heapify(streams)
+    while streams:
+        _, name, index, series = heapq.heappop(streams)
+        yield name, index, series[index]
+        nxt = index + 1
+        if nxt < len(series):
+            heapq.heappush(streams, (series[nxt].ts, name, nxt, series))
 
 
 def run_backtest(
@@ -292,5 +422,17 @@ def run_backtest(
     series: BarSeries,
     progress: ProgressFn | None = None,
 ) -> BacktestResult:
-    """Bequemer Einstieg fuer Skripte und API."""
+    """Bequemer Einstieg fuer Skripte und API (ein Instrument)."""
     return Backtester(symbol, instrument, config).run(series, progress)
+
+
+def run_multi_backtest(
+    instruments: dict[str, Instrument],
+    config: Config,
+    series_by_symbol: dict[str, BarSeries],
+    progress: ProgressFn | None = None,
+) -> BacktestResult:
+    """Mehrere Instrumente an einem Konto."""
+    return Backtester(config=config, instruments=instruments).run_many(
+        series_by_symbol, progress
+    )

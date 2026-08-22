@@ -180,6 +180,22 @@ Schwellenwerte **in** ihr.
 Jede Strategie ist eine **Hypothese**. Ob sie einen Edge hat, sagt der Backtest,
 einschließlich der Antwort „nein".
 
+### Mehrere Instrumente an einem Konto
+
+```bash
+python scripts/run_backtest.py --symbol MNQ_PROXY,MES_PROXY --from 2023-01-01
+```
+
+Dieselben Regeln auf mehreren Symbolen — der einzige Hebel, der die
+Trade-Anzahl linear erhöht, **ohne eine Regel anzufassen**. Die Bars werden
+streng chronologisch verschränkt und teilen sich **ein** Risikobuch; liefe
+Symbol für Symbol durch, sähe das gemeinsame Buch beim zweiten bereits alle
+Ergebnisse des ersten.
+
+> **Nicht überschätzen:** S&P und Nasdaq sind stark korreliert. Zwei
+> Instrumente liefern deshalb *nicht* die doppelte unabhängige Stichprobe —
+> die Vertrauensbänder schrumpfen langsamer als die Trade-Anzahl wächst.
+
 ### Die Pflichtkette im Detail (Spec §7)
 
 Fehlt ein Glied, entsteht kein Trade — der Bot ergänzt nichts:

@@ -110,7 +110,9 @@ def main() -> int:
     print(f"  Dukascopy -> {args.symbol}   ({instrument.dukascopy_symbol})")
     print("=" * 70)
     print(f"  Zeitraum : {start:%Y-%m-%d} bis {end:%Y-%m-%d}  ({total_days} Tage)")
-    print("  Quelle   : Nasdaq-100 Index CFD - NICHT der MNQ-Future")
+    # Den Namen aus der Instrumentdefinition nehmen, nicht fest verdrahten:
+    # seit es mehrere Proxy-Symbole gibt, waere ein fester Text schlicht falsch.
+    print(f"  Quelle   : {instrument.name}")
     print("  Kosten   : keine")
     if existing:
         print(f"  Vorhanden: {len(existing)} Tage werden uebersprungen")

@@ -75,6 +75,21 @@ class RiskLedger:
         self._open: dict[int, OpenPosition] = {}
         self._closed: list[ClosedTrade] = []
         self._current_day: int | None = None
+        self._next_trade_id = 1
+
+    def next_trade_id(self) -> int:
+        """Naechste kontoweit eindeutige Trade-Nummer.
+
+        Sie entsteht ABSICHTLICH hier und nicht in der Strategie oder im
+        Portfolio: der Schluessel muss ueber alles eindeutig sein, was sich
+        dieses Buch teilt - alle Strategien UND alle Instrumente. Genau diese
+        Verwechslung ist beim Umbau zweimal aufgetreten, erst zwischen
+        Strategien, dann zwischen Symbolen. Wer den Zaehler dort fuehrt, wo das
+        Konto liegt, kann sie kein drittes Mal bauen.
+        """
+        current = self._next_trade_id
+        self._next_trade_id += 1
+        return current
 
     # ---------------------------------------------------------------- Handelstag
     def day(self, trading_day: int) -> DayState:
@@ -175,3 +190,4 @@ class RiskLedger:
         self._open.clear()
         self._closed.clear()
         self._current_day = None
+        self._next_trade_id = 1

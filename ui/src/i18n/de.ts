@@ -326,6 +326,7 @@ export const de = {
     byStrategy: 'Nach Strategie',
     byStrategyHint:
       'Mehrere Strategien laufen parallel am selben Konto. Diese Aufstellung zeigt, welche das Ergebnis getragen hat - und welche nur Gebuehren produziert.',
+    bySymbol: 'Nach Instrument',
     bySession: 'Nach Session',
     byDirection: 'Nach Richtung',
     byExit: 'Nach Ausstiegsart',
