@@ -32,8 +32,10 @@ def trade(
 ) -> SimulatedTrade:
     """Ein Trade mit frei gewaehltem Ergebnis. 1R = 100 USD, sofern nicht anders gesagt."""
     return SimulatedTrade(
+        trade_id=setup_id,
         setup_id=setup_id,
         symbol="MNQ",
+        strategy="ict_chain",
         direction=direction,
         quantity=1,
         planned_entry=21000.0,
@@ -43,6 +45,7 @@ def trade(
         planned_stop_ticks=40.0,
         stop_anchor="retracement",
         target_source="liquidity",
+        timeframe="1m",
         htf_bias="bullish",
         session=session,
         trading_day=20250303,

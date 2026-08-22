@@ -22,9 +22,9 @@ from tradex.backtest.report import build
 from tradex.backtest.runner import Backtester
 from tradex.config import BacktestConfig, Config, RiskConfig
 from tradex.domain.bars import BarSeries
-from tradex.domain.enums import Direction, ExitReason
+from tradex.domain.enums import Direction, ExitReason, Timeframe
 from tradex.domain.instruments import Instrument
-from tradex.strategy.engine import StrategyEngine
+from tradex.strategy.registry import build_portfolio
 
 SYMBOL = "MNQ"
 DAYS = 60 * 24 * 12
@@ -80,7 +80,7 @@ def test_backtest_faellt_dieselben_entscheidungen_wie_die_strategie(
     plain = _without_risk_feedback(tuned)
 
     context = MarketContext(SYMBOL, mnq, plain)
-    engine = StrategyEngine(SYMBOL, mnq, plain)
+    engine = build_portfolio(SYMBOL, mnq, plain)
     for bar in series:
         updates = context.on_base_bar(bar)
         if updates:
@@ -94,12 +94,15 @@ def test_backtest_faellt_dieselben_entscheidungen_wie_die_strategie(
         ]
 
     assert fingerprint(engine.decisions) == fingerprint(backtest.decisions)
-    # Jedes Signal des blanken Laufs wird im Backtest entweder gefuellt oder
-    # verfaellt am Datenende - verschwinden darf keines.
-    assert len(engine.signals) == len(backtest.trades) + backtest.unfilled
-    assert [s.entry for s in engine.signals][: len(backtest.trades)] == [
-        t.planned_entry for t in backtest.trades
-    ]
+    # Jedes Signal des blanken Laufs wird im Backtest gefuellt, verfaellt am
+    # Datenende oder wird als veraltet verworfen - verschwinden darf keines.
+    assert len(engine.signals) == len(backtest.trades) + backtest.unfilled + backtest.stale
+    # Abgeglichen wird ueber die kontoweite Kennung, nicht ueber die Position
+    # in der Liste: Trades werden in AUSSTIEGS-Reihenfolge gesammelt, Signale
+    # in Signalreihenfolge. Mit mehreren Strategien faellt beides auseinander.
+    planned = {s.trade_id: s.entry for s in engine.signals}
+    for trade in backtest.trades:
+        assert planned[trade.trade_id] == trade.planned_entry, trade
 
 
 def test_es_entstehen_ueberhaupt_trades(result):
@@ -191,10 +194,12 @@ def test_pessimistische_annahme_ist_nie_besser_als_die_optimistische(
         SYMBOL, mnq, _with_backtest(plain, same_bar_resolution="target_first")
     ).run(series)
 
-    by_id = {t.setup_id: t for t in optimistic.trades}
+    # Ueber trade_id, nicht setup_id: letztere zaehlt je Strategie und
+    # kollidiert zwischen ihnen.
+    by_id = {t.trade_id: t for t in optimistic.trades}
     assert by_id, "ohne Trades sagt der Vergleich nichts"
     for trade in pessimistic.trades:
-        counterpart = by_id[trade.setup_id]
+        counterpart = by_id[trade.trade_id]
         assert trade.pnl <= counterpart.pnl + 1e-9, trade
 
 
@@ -224,6 +229,69 @@ def test_zeitstop_wird_eingehalten(tuned: Config, mnq: Instrument, series: BarSe
     assert any(t.exit_reason is ExitReason.TIME for t in limited.trades), (
         "kein einziger Trade lief in den Zeitstop - er ist damit wirkungslos"
     )
+
+
+# ------------------------------------------------------------- Datenluecken
+def test_signal_ueber_einer_datenluecke_wird_verworfen(
+    tuned: Config, mnq: Instrument, series: BarSeries
+):
+    """Gefunden an echten Daten: Juneteenth 2023.
+
+    Der Handel endete um 11:58 CT und lief erst um 17:00 CT weiter. Die
+    Signalbar von 11:58 gilt erst als geschlossen, wenn die naechste Bar
+    eintrifft - also fuenf Stunden spaeter. Ohne diese Regel wurde daraus ein
+    Einstieg um 17:01 auf Grundlage eines Kursverlaufs vom Vormittag: ein
+    Trade, den es nie gab, mit -1,50 R im Ergebnis.
+
+    Hier nachgestellt, indem aus einer Serie mit Trades ein Block
+    herausgeschnitten wird. Geprueft wird die Eigenschaft, nicht der Einzelfall:
+    zwischen Signal und Fuellung darf nie mehr Zeit liegen als erlaubt.
+    """
+    interval_ns = tuned.data.base_timeframe.seconds * 1_000_000_000
+    grace_ns = tuned.backtest.max_signal_age_bars * interval_ns
+
+    # Jede zehnte Stunde faellt aus - das erzeugt reichlich Luecken mitten im
+    # Geschehen, ohne die Kursreihe selbst zu veraendern.
+    with_gaps = BarSeries()
+    for i, bar in enumerate(series):
+        if (i // 60) % 10 == 9:
+            continue
+        with_gaps.append_bar(bar)
+
+    result = Backtester(SYMBOL, mnq, tuned).run(with_gaps)
+
+    assert result.signals > 0, "ohne Signale sagt der Test nichts"
+    for trade in result.trades:
+        # Erlaubt ist die Dauer der Signalbar plus die Frist danach. Die
+        # Signalbar-Dauer gehoert dazu, weil der Timestamp ihre EROEFFNUNG
+        # bezeichnet - eine 5m-Bar ist beim Schliessen schon 5 Minuten alt.
+        allowed = Timeframe.parse(trade.timeframe).seconds * 1_000_000_000 + grace_ns
+        age = trade.entry_ts - trade.signal_ts
+        assert age <= allowed, (
+            f"{trade.strategy} #{trade.setup_id} wurde {age / 60e9:.0f} Minuten nach "
+            f"dem Signal gefuellt, erlaubt sind {allowed / 60e9:.0f}"
+        )
+
+
+def test_verworfene_signale_belegen_keinen_risikoplatz(
+    tuned: Config, mnq: Instrument, series: BarSeries
+):
+    """Eine nie gefuellte Order darf nicht als genommener Trade zaehlen.
+
+    Sonst wuerde ein Feiertag das Tageslimit aufbrauchen, ohne dass je eine
+    Position bestand.
+    """
+    trimmed = BarSeries()
+    for i, bar in enumerate(series):
+        if (i // 60) % 10 == 9:
+            continue
+        trimmed.append_bar(bar)
+
+    backtester = Backtester(SYMBOL, mnq, tuned)
+    result = backtester.run(trimmed)
+
+    assert backtester.ledger.open_count == 0
+    assert len(result.trades) + result.unfilled + result.stale == result.signals
 
 
 # --------------------------------------------------------------- Risikobuch

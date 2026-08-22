@@ -541,6 +541,7 @@ class TradeSignalDto(_Dto):
 
     setup_id: int
     symbol: str
+    strategy: str
     side: str
     entry: float
     stop: float
@@ -559,6 +560,7 @@ class TradeSignalDto(_Dto):
         return cls(
             setup_id=signal.setup_id,
             symbol=signal.symbol,
+            strategy=signal.strategy,
             side=signal.side,
             entry=signal.entry,
             stop=signal.stop,
@@ -585,6 +587,7 @@ class StrategyDecisionDto(_Dto):
     decision: str
     stage: str
     htf_bias: str
+    strategy: str
     checklist: dict[str, bool]
     missing: tuple[str, ...]
     blocking_reason: str
@@ -602,6 +605,7 @@ class StrategyDecisionDto(_Dto):
             decision=decision.decision,
             stage=decision.stage,
             htf_bias=decision.htf_bias,
+            strategy=decision.strategy,
             checklist=decision.checklist,
             missing=tuple(decision.missing),
             blocking_reason=decision.blocking_reason,
@@ -733,6 +737,7 @@ class SimulatedTradeDto(_Dto):
     """Ein simulierter Trade - geplant und tatsaechlich gefuellt."""
 
     setup_id: int
+    strategy: str
     side: str
     session: str
     quantity: int
@@ -759,6 +764,7 @@ class SimulatedTradeDto(_Dto):
     def of(cls, trade: SimulatedTrade) -> SimulatedTradeDto:
         return cls(
             setup_id=trade.setup_id,
+            strategy=trade.strategy,
             side=trade.side,
             session=trade.session,
             quantity=trade.quantity,
@@ -805,6 +811,7 @@ class BacktestReportDto(_Dto):
     in_sample: MetricsDto
     out_of_sample: MetricsDto
 
+    by_strategy: dict[str, MetricsDto]
     by_session: dict[str, MetricsDto]
     by_direction: dict[str, MetricsDto]
     by_exit: dict[str, MetricsDto]
@@ -815,6 +822,7 @@ class BacktestReportDto(_Dto):
     rejections: dict[str, int]
     signals: int
     unfilled: int
+    stale: int
     trades_total: int
     equity: tuple[EquityPointDto, ...]
     trades: tuple[SimulatedTradeDto, ...]
@@ -839,6 +847,7 @@ class BacktestReportDto(_Dto):
             overall=MetricsDto.of(report.overall),
             in_sample=MetricsDto.of(report.in_sample),
             out_of_sample=MetricsDto.of(report.out_of_sample),
+            by_strategy=table(report.by_strategy),
             by_session=table(report.by_session),
             by_direction=table(report.by_direction),
             by_exit=table(report.by_exit),
@@ -848,6 +857,7 @@ class BacktestReportDto(_Dto):
             rejections=report.rejections,
             signals=report.signals,
             unfilled=report.unfilled,
+            stale=report.stale,
             trades_total=report.trades_total,
             equity=tuple(EquityPointDto.of(p) for p in report.equity),
             trades=tuple(SimulatedTradeDto.of(t) for t in report.trades),

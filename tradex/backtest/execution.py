@@ -42,8 +42,15 @@ class SimulatedTrade:
     Statistik an der Regel oder an den Ausfuehrungsannahmen liegt.
     """
 
+    trade_id: int
+    """Kontoweit eindeutig. `setup_id` zaehlt je Strategie und kollidiert."""
     setup_id: int
     symbol: str
+    strategy: str
+    """Welche Strategie den Trade vorgeschlagen hat.
+
+    Die wichtigste Spalte, sobald mehrere Strategien am selben Konto laufen:
+    ohne sie liesse sich nicht sagen, welche das Ergebnis getragen hat."""
     direction: Direction
     quantity: int
 
@@ -55,6 +62,8 @@ class SimulatedTrade:
     planned_stop_ticks: float
     stop_anchor: str
     target_source: str
+    timeframe: str
+    """Zeitebene der Signalbar - siehe `TradeSignal.timeframe`."""
     htf_bias: str
     session: str
     trading_day: int
@@ -168,6 +177,11 @@ class OpenTrade:
     @property
     def setup_id(self) -> int:
         return self.signal.setup_id
+
+    @property
+    def trade_id(self) -> int:
+        """Schluessel im Risikobuch - kontoweit eindeutig, anders als setup_id."""
+        return self.signal.trade_id
 
     # Schlupf laeuft IMMER gegen die Position - aber die Richtung "gegen" ist
     # beim Einstieg und beim Ausstieg entgegengesetzt: teurer kaufen heisst
@@ -288,8 +302,10 @@ class OpenTrade:
         )
 
         return SimulatedTrade(
+            trade_id=signal.trade_id,
             setup_id=signal.setup_id,
             symbol=signal.symbol,
+            strategy=signal.strategy,
             direction=signal.direction,
             quantity=quantity,
             planned_entry=signal.entry,
@@ -299,6 +315,7 @@ class OpenTrade:
             planned_stop_ticks=signal.stop_ticks,
             stop_anchor=signal.stop_anchor,
             target_source=signal.target_source,
+            timeframe=signal.timeframe,
             htf_bias=self.htf_bias,
             session=self.session,
             trading_day=self.trading_day,

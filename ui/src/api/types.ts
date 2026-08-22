@@ -284,6 +284,7 @@ export interface Setup {
 export interface TradeSignal {
   setup_id: number;
   symbol: string;
+  strategy: string;
   side: 'LONG' | 'SHORT';
   entry: number;
   stop: number;
@@ -307,6 +308,7 @@ export interface StrategyDecision {
   decision: 'LONG' | 'SHORT' | 'NO_TRADE';
   stage: SetupStage;
   htf_bias: BiasValue;
+  strategy: string;
   checklist: Record<string, boolean>;
   missing: string[];
   blocking_reason: string;
@@ -368,6 +370,8 @@ export interface EquityPoint {
 
 export interface SimulatedTrade {
   setup_id: number;
+  /** Welche Strategie den Trade vorgeschlagen hat. */
+  strategy: string;
   side: 'LONG' | 'SHORT';
   session: string;
   quantity: number;
@@ -406,6 +410,8 @@ export interface BacktestReport {
   overall: Metrics;
   in_sample: Metrics;
   out_of_sample: Metrics;
+  /** Welche Strategie hat das Ergebnis getragen, welche nur Gebuehren produziert? */
+  by_strategy: Record<string, Metrics>;
   by_session: Record<string, Metrics>;
   by_direction: Record<string, Metrics>;
   by_exit: Record<string, Metrics>;
@@ -415,6 +421,8 @@ export interface BacktestReport {
   rejections: Record<string, number>;
   signals: number;
   unfilled: number;
+  /** Signale ueber einer Datenluecke - verworfen statt Stunden spaeter gefuellt. */
+  stale: number;
   trades_total: number;
   equity: EquityPoint[];
   trades: SimulatedTrade[];

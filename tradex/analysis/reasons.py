@@ -46,6 +46,10 @@ SETUP_STARTED: Final = "setup.started"
 SETUP_INVALIDATED_BEYOND_SWEEP: Final = "setup.invalidated_beyond_sweep"
 SETUP_INVALIDATED_BIAS_FLIP: Final = "setup.invalidated_bias_flip"
 SETUP_EXPIRED: Final = "setup.expired"
+SETUP_CROWDED_OUT: Final = "setup.crowded_out"
+
+# --- Opening Range Breakout (zweite Strategie) ------------------------------
+OPENING_RANGE_BREAKOUT: Final = "opening_range.breakout"
 SETUP_COMPLETE: Final = "setup.complete"
 
 # --- Stop Loss (Spec §11) ---------------------------------------------------
@@ -106,6 +110,8 @@ ALL_CODES: Final[tuple[str, ...]] = (
     SETUP_INVALIDATED_BEYOND_SWEEP,
     SETUP_INVALIDATED_BIAS_FLIP,
     SETUP_EXPIRED,
+    SETUP_CROWDED_OUT,
+    OPENING_RANGE_BREAKOUT,
     SETUP_COMPLETE,
     STOP_PLACED,
     STOP_TOO_WIDE,

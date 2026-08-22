@@ -37,6 +37,7 @@ def params(**overrides: object) -> BacktestConfig:
 def long_signal(quantity: int = 2) -> TradeSignal:
     """LONG 21000 / Stop 20990 / Ziel 21020 - runde Zahlen zum Nachrechnen."""
     return TradeSignal(
+        trade_id=1,
         setup_id=1,
         symbol="MNQ",
         direction=Direction.BULLISH,
@@ -58,6 +59,7 @@ def long_signal(quantity: int = 2) -> TradeSignal:
 
 def short_signal(quantity: int = 1) -> TradeSignal:
     return TradeSignal(
+        trade_id=2,
         setup_id=2,
         symbol="MNQ",
         direction=Direction.BEARISH,

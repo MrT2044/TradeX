@@ -160,10 +160,29 @@ belegten Größen** — sie zu prüfen ist Aufgabe des Backtests in Phase 4.
 | **Sweep** | Durchstich **und** Rückeroberung innerhalb von `max_reclaim_bars`. Ohne Rückeroberung ist es ein Ausbruch, kein Sweep. |
 | **HTF Bias** | Gewichtet aus Struktur, FVG-Balance und Liquiditäts-Zug über 4H/1H, mit Neutralband. |
 
-## Die Strategie (Phase 3)
+## Strategien
 
-Die Pflichtkette aus §7 als Zustandsmaschine. Fehlt ein Glied, entsteht kein
-Trade — der Bot ergänzt nichts:
+Es laufen **mehrere Strategien parallel an einem Konto**. Sie schlagen vor; über
+Positionsgröße, Tagesgrenzen und Handelsfenster entscheidet eine gemeinsame
+Risiko-Pipeline — sonst wäre das tatsächliche Gesamtrisiko die Summe der
+Einzelbudgets.
+
+| Strategie | Regel | Frequenz (gemessen 2024) |
+|---|---|---|
+| **Pflichtkette (ICT)** | §7 als Zustandsmaschine, sechs Pflichtglieder | 0,03 Trades/Tag |
+| **Eröffnungsspanne** | Ausbruch aus der Spanne der ersten 30 Session-Minuten | 0,44 Trades/Tag |
+
+Die Kette ist strukturell niederfrequent: zwei ihrer Glieder filtern je rund
+89 %, aus 18,9 Kandidaten pro Tag werden 0,25 vollständige Ketten. Für tägliche
+Trades braucht es weitere Strategien **neben** ihr — nicht schnellere
+Schwellenwerte **in** ihr.
+
+Jede Strategie ist eine **Hypothese**. Ob sie einen Edge hat, sagt der Backtest,
+einschließlich der Antwort „nein".
+
+### Die Pflichtkette im Detail (Spec §7)
+
+Fehlt ein Glied, entsteht kein Trade — der Bot ergänzt nichts:
 
 ```
 HTF Bias → Liquidity Sweep → Displacement → FVG → Retracement → MSS → Entry
@@ -226,6 +245,14 @@ Wirklichkeit, produziert genau die Zahlen, die man sehen will.
 | **Stop und Ziel in derselben Bar** | `stop_first` | OHLC sagt nicht, was zuerst kam. Angenommen wird der schlechtere Fall. |
 | **Kurssprung über den Stop** | Füllung am Eröffnungskurs | Eröffnet die Bar jenseits des Stops, gibt es den Stopkurs nicht mehr. |
 | **Schlupf** | Stop 1 Tick, Ziel 0 | Der Stop ist eine Market-Order und rutscht. Das Ziel ist eine Limit-Order: sie füllt zum Kurs oder gar nicht. |
+| **Signal über einer Datenlücke** | verworfen ab 2 Bars Abstand | „Die nächste Bar" ist nicht „die nächste Minute" — siehe unten. |
+
+Die letzte Zeile stammt aus einem echten Fund. Am 19.06.2023 (Juneteenth)
+endete der Handel um 11:58 CT und lief erst um 17:00 CT weiter. Eine Bar gilt
+erst als geschlossen, wenn die nächste eintrifft — die Signalbar von 11:58
+wurde also fünf Stunden später ausgewertet und der Einstieg um 17:01 gefüllt.
+Ein Trade, den es nie gab, mit −1,50 R im Ergebnis. Normal liegen zwischen
+Signal und Füllung genau zwei Bars; alles darüber ist eine Lücke.
 
 Dazu Gebühren (0,74 $ je Kontrakt und Round Turn) und ein Zeitstop. Alle
 Ergebnisse sind **netto** — auch das R-Vielfache. Eine Statistik, die Kosten
@@ -323,11 +350,30 @@ Parallel `python -m tradex.shell --server` laufen lassen.)
 | 2 | Multi-Timeframe-Analyse, alle Detektoren | **fertig** |
 | 3 | Strategy Engine, SL/TP, Risk Management | **fertig** |
 | 4 | Backtesting und Statistik (Spec §19) | **fertig** |
-| 5 | NinjaTrader Paper Trading | offen |
+| **4b** | **Day-Trading-Umbau: Strategie-Registry, mehrere Strategien** | **läuft** |
+| 5 | NinjaTrader Paper Trading (Broker-Anschluss) | offen |
 | 6 | News- und KI-Kontextschicht | offen |
 | 7 | Dashboard, Kill Switch, Monitoring | offen |
 | 8 | Live Manual | offen |
 | 9 | Live Auto | offen |
+
+**Phase 4b stand nicht im ursprünglichen Plan.** Sie wurde nötig, weil Phase 4
+erstmals *gemessen* hat, was die Pflichtkette leistet: 0,25 vollständige Setups
+pro Handelstag, rund 10 Trades im Jahr. Das ist kein Day-Trading-System, und vor
+Phase 4 konnte das niemand wissen — es gab keine Messung. Genau dafür war sie da.
+
+Inhalt von 4b: Strategie-Registry (fertig), Multi-Instrument, News-Filter,
+Musterstatistik.
+
+### Warum Phase 5 wartet
+
+Der Broker-Anschluss ist der einzige Baustein, der **Geld kostet, wenn die Regel
+verliert**. Aktueller Messstand: Erwartungswert +0,125 R über 147 Trades, das
+95-%-Band reicht von −0,14 bis +0,39 R und schließt null ein. Eine Automatik auf
+dieser Grundlage würde zuverlässig ausführen, was noch nicht nachgewiesen ist.
+
+Die übrigen Bausteine von 4b sind Messwerkzeuge und werden ohnehin gebraucht —
+egal, wie die Edge-Frage ausgeht.
 
 Live Auto darf erst freigeschaltet werden, wenn Paper Trading und Backtesting
 nachweislich funktionieren.

@@ -1,4 +1,29 @@
 # ============================================================================
+#  MESSKONFIGURATION - nur fuer die Edge-Frage, NICHT fuer den Betrieb
+# ============================================================================
+#  Aufruf:
+#      $env:TRADEX_CONFIG = "config\backtest_edge.yaml"
+#      .\.venv\Scripts\python.exe scripts\run_backtest.py --symbol MNQ_PROXY --save
+#
+#  WARUM ES DIESE DATEI GIBT
+#  -------------------------
+#  Mit 10.000 USD und 0,25 % Risiko sind 25 USD je Trade erlaubt. MNQ kostet
+#  2 USD je Punkt - der groesste bezahlbare Stop ist damit 12,5 Punkte
+#  (50 Ticks). Gemessen ueber 2023-2026 scheiterten daran 149 von rund 310
+#  vollstaendigen Setups: fast die Haelfte, bevor die Regel ueberhaupt
+#  beurteilt werden konnte.
+#
+#  Diese Datei beantwortet deshalb genau EINE Frage: Hat die Regelmechanik
+#  einen statistischen Edge, wenn das Risikobudget nicht der begrenzende
+#  Faktor ist? Sie sagt NICHTS darueber, mit welchem Konto man das handeln
+#  kann - das ist eine getrennte Frage und wird ueber default.yaml beantwortet.
+#
+#  EINZIGER UNTERSCHIED ZU default.yaml: risk.account_size (10.000 -> 25.000).
+#  Alle Schwellenwerte der Strategie bleiben unveraendert. Ein Test prueft das
+#  (tests/test_config_and_persistence.py) - ohne ihn wuerde die Datei mit der
+#  Zeit unbemerkt auseinanderlaufen und eine zweite Regelfassung werden.
+# ============================================================================
+# ============================================================================
 #  TradeX - zentrale Konfiguration
 # ============================================================================
 #  ARCHITEKTUR-INVARIANTE 4 (Spec §29):
@@ -174,38 +199,6 @@ strategy:
   invalidate_on_bias_flip: true   # HTF-Richtung dreht -> Setup tot
   max_active_setups: 4
 
-# ============================================================================
-#  STRATEGIE 2: Opening Range Breakout
-# ============================================================================
-#  Die ICT-Pflichtkette ist strukturell niederfrequent (gemessen: 0,25
-#  vollstaendige Ketten pro Handelstag). Fuer ein Day-Trading-System braucht es
-#  Regeln, die oefter ausloesen - ohne die Kette dafuer aufzuweichen.
-#
-#  Bewusst ein LEHRBUCHVERFAHREN, keine Erfindung: die ersten Minuten einer
-#  Session bilden eine Spanne, ein Schlusskurs jenseits davon ist der Ausbruch.
-#  Die Werte wurden VOR der ersten Messung festgelegt.
-#
-#  Auch das ist eine HYPOTHESE. Ob sie einen Edge hat, sagt der Backtest -
-#  einschliesslich der Antwort "nein".
-# ============================================================================
-
-opening_range:
-  enabled: true
-  timeframe: "5m"
-  sessions: ["london", "ny_am"]
-  range_minutes: 30             # Laenge der Eroeffnungsspanne
-  min_range_atr_mult: 0.8       # darunter waere der Ausbruch nur Rauschen
-  max_range_ticks: 400          # zu weite Spanne -> Stop unbezahlbar
-  stop_buffer_ticks: 4
-  # Ziel als Vielfaches der Spannenbreite. MUSS groesser als risk.min_rr sein:
-  # der Stop liegt auf der Gegenseite der Spanne, das erreichbare CRV ist also
-  # mult * W / (W + Puffer) und damit immer kleiner als mult. Bei 2.0 gegen
-  # min_rr 2.0 waere die Strategie rechnerisch handlungsunfaehig - gemessen
-  # 387 Ablehnungen "CRV zu niedrig" und null Trades. consistency.py meldet das.
-  target_range_mult: 3.0
-  max_trades_per_session: 2     # kein Nachkaufen bei Fehlausbruechen
-  max_tracked_sessions: 8
-
 # ----------------------------------------------------------------- Stop Loss
 # Spec §11: kein willkuerlicher Abstand, sondern ein Kurs mit Bedeutung.
 #
@@ -253,7 +246,7 @@ trading_windows:
 
 risk:
   enabled: true
-  account_size: 10000.0
+  account_size: 25000.0        # abweichend von default.yaml - siehe Kopf
   risk_per_trade_pct: 0.25        # 25 USD bei 10.000 USD Konto
   max_daily_loss_pct: 1.0
   max_trades_per_day: 3

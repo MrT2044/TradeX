@@ -1,9 +1,23 @@
-"""Strategy Engine (Spec §6-§13).
+"""Die ICT-Pflichtkette als Strategie (Spec §6-§13).
 
 Setzt die Pflichtkette auf die Analyse-Engine auf. Sie erzeugt selbst keine
 Marktaussagen - alle Bedingungen kommen aus den Detektoren aus `tradex.analysis`.
-Diese Schicht verkettet sie nur zeitlich, berechnet Stop, Ziel und Groesse und
-faellt am Ende ein Urteil.
+Diese Schicht verkettet sie nur zeitlich, berechnet Stop und Ziel und liefert
+am Ende einen Vorschlag.
+
+Sie entscheidet NICHT, ob gehandelt wird
+----------------------------------------
+Positionsgroesse, Tagesgrenzen und Handelsfenster gehoeren dem Portfolio
+(`tradex/strategy/portfolio.py`), weil sie fuer das ganze Konto gelten und
+nicht je Strategie. Diese Klasse liefert `TradeProposal` - Richtung, Einstieg,
+Stop, Ziel, Begruendung - und ist damit fertig.
+
+Was diese Strategie NICHT kann
+------------------------------
+Sie ist strukturell niederfrequent. Gemessen auf MNQ_PROXY 2024: aus 18,9
+Kandidaten pro Tag werden 0,25 vollstaendige Ketten - zwei Pflichtglieder
+filtern je rund 89 %. Fuer taegliche Trades braucht es weitere Strategien
+neben ihr, nicht schnellere Schwellenwerte in ihr.
 
 Zusammenspiel der Ebenen
 ------------------------
@@ -18,8 +32,8 @@ die 5m-Bar gerade ein Retracement war.
 
 Was NICHT hier passiert
 -----------------------
-Kein Order-Routing, keine Fills, keine Positionsverwaltung. Phase 3 rechnet
-Signale aus und protokolliert sie. Ausfuehrung ist Phase 5 und spaeter.
+Kein Order-Routing, keine Fills, keine Positionsverwaltung, keine
+Risikopruefung. Ausfuehrung ist Phase 5 und spaeter.
 """
 
 from __future__ import annotations
@@ -33,10 +47,9 @@ from tradex.domain.enums import Bias, Direction, Timeframe
 from tradex.domain.instruments import Instrument
 from tradex.logging_setup import get_logger
 from tradex.persistence.models import Reason
-from tradex.risk.engine import RiskEngine
-from tradex.risk.ledger import RiskLedger
+from tradex.strategy.base import Strategy, StrategyOutput, TradeProposal
 from tradex.strategy.setup import SetupCandidate, SetupStage
-from tradex.strategy.signal import StrategyDecision, TradeSignal
+from tradex.strategy.signal import StrategyDecision
 from tradex.strategy.stops import place_stop
 from tradex.strategy.targets import place_target
 
@@ -48,64 +61,59 @@ log = get_logger(__name__)
 _FVG_MATCH_WINDOW = 2
 
 
-class StrategyEngine:
-    """Verfolgt Setup-Kandidaten und faellt Handelsentscheidungen."""
+#: Kurzname der Strategie. Er landet in jedem Protokolleintrag und in jeder
+#: Aufschluesselung des Backtests - deshalb stabil halten.
+CHAIN_NAME = "ict_chain"
 
-    def __init__(
-        self,
-        symbol: str,
-        instrument: Instrument,
-        config: Config,
-        ledger: RiskLedger | None = None,
-    ) -> None:
+
+class ChainStrategy(Strategy):
+    """Verfolgt Setup-Kandidaten und liefert Handelsvorschlaege."""
+
+    name = CHAIN_NAME
+
+    def __init__(self, symbol: str, instrument: Instrument, config: Config) -> None:
         self.symbol = symbol.upper()
         self.instrument = instrument
         self.config = config
         self.params = config.strategy
-        self.ledger = ledger or RiskLedger()
-        self.risk = RiskEngine(config, instrument, self.ledger)
 
         self.candidates: list[SetupCandidate] = []
-        self.decisions: list[StrategyDecision] = []
-        self.signals: list[TradeSignal] = []
         self._next_id = 1
         self._bias: Bias = Bias.NEUTRAL
-        self._approved_in_batch = 0
-        """Auf dieser Basis-Bar bereits genehmigte Trades.
-
-        Bestaetigen mehrere Setups gleichzeitig, sind sie noch in keinem
-        Risikobuch verzeichnet, wenn der naechste geprueft wird - alle saehen
-        dieselbe freie Position. Dieser Zaehler schliesst die Luecke."""
 
         self.setup_tf: Timeframe = config.strategy.setup_timeframe
         self.confirmation_tf: Timeframe = config.strategy.confirmation_timeframe
 
+    def reset(self) -> None:
+        self.candidates = []
+        self._next_id = 1
+        self._bias = Bias.NEUTRAL
+
     # ------------------------------------------------------------------- Einstieg
     def on_updates(
         self, updates: list[TimeframeUpdate], context: MarketContext
-    ) -> list[StrategyDecision]:
+    ) -> StrategyOutput:
         """Alle Timeframe-Aenderungen einer Basis-Bar verarbeiten."""
+        out = StrategyOutput()
         if not self.params.enabled or not updates:
-            return []
+            return out
 
         self._bias = context.bias().bias
-        self._approved_in_batch = 0
-        produced: list[StrategyDecision] = []
 
         for update in updates:
             if update.timeframe is self.confirmation_tf:
-                produced.extend(self._on_confirmation_bar(update, context))
+                out.extend(self._on_confirmation_bar(update, context))
             if update.timeframe is self.setup_tf:
-                produced.extend(self._on_setup_bar(update, context))
+                out.extend(self._on_setup_bar(update, context))
+        return out
 
-        self.decisions.extend(produced)
-        return produced
+    def active_setups(self) -> list[SetupCandidate]:
+        return [c for c in self.candidates if c.is_open]
 
     # --------------------------------------------------------------- Setup-Ebene
-    def _on_setup_bar(
-        self, update: TimeframeUpdate, context: MarketContext
-    ) -> list[StrategyDecision]:
-        produced: list[StrategyDecision] = []
+    def _on_setup_bar(self, update: TimeframeUpdate, context: MarketContext) -> StrategyOutput:
+        out = StrategyOutput()
+        produced: list[StrategyDecision] = out.decisions
         state = context.states[self.setup_tf]
         index = update.index
 
@@ -122,8 +130,8 @@ class StrategyEngine:
                 self._try_retracement(candidate, update, context, index)
 
         self._spawn_from_sweeps(update, index)
-        self._prune()
-        return produced
+        produced.extend(self._prune(update, index))
+        return out
 
     def _spawn_from_sweeps(self, update: TimeframeUpdate, index: int) -> None:
         """Neue Kandidaten aus frischen Sweeps - aber nur in Richtung des HTF-Bias.
@@ -310,9 +318,10 @@ class StrategyEngine:
     # -------------------------------------------------------- Bestaetigungsebene
     def _on_confirmation_bar(
         self, update: TimeframeUpdate, context: MarketContext
-    ) -> list[StrategyDecision]:
-        """Schritt 6: MSS auf der Einstiegsebene. Erst hier entsteht ein Signal."""
-        produced: list[StrategyDecision] = []
+    ) -> StrategyOutput:
+        """Schritt 6: MSS auf der Einstiegsebene. Erst hier entsteht ein Vorschlag."""
+        out = StrategyOutput()
+        produced: list[StrategyDecision] = out.decisions
         index = update.index
 
         for candidate in list(self.candidates):
@@ -357,15 +366,19 @@ class StrategyEngine:
             candidate.confirmation = event
             candidate.confirmed_index = index
             candidate.advance(SetupStage.CONFIRMED, index, update.bar.ts, "mss")
-            produced.append(self._finalize(candidate, update, context, index))
+            result = self._finalize(candidate, update, context, index)
+            if isinstance(result, TradeProposal):
+                out.proposals.append(result)
+            else:
+                produced.append(result)
 
-        return produced
+        return out
 
-    # ------------------------------------------------------------------- Urteil
+    # ------------------------------------------------------------------ Vorschlag
     def _finalize(
         self, candidate: SetupCandidate, update: TimeframeUpdate, context: MarketContext, index: int
-    ) -> StrategyDecision:
-        """Stop, Ziel, Groesse - und die abschliessende Entscheidung."""
+    ) -> StrategyDecision | TradeProposal:
+        """Stop und Ziel rechnen. Ergebnis ist ein Vorschlag oder eine Ablehnung."""
         bar = update.bar
         entry_price = self.instrument.round_to_tick(bar.close)
         setup_state = context.states[self.setup_tf]
@@ -455,18 +468,12 @@ class StrategyEngine:
             )
         )
 
-        # ---- Risiko (Spec §10, §13)
+        # Hier endet die Zustaendigkeit der Strategie. Ueber Groesse, Grenzen
+        # und Handelsfenster entscheidet das Portfolio - sie gelten fuer das
+        # ganze Konto und nicht je Strategie.
         session, trading_day, _ = context.resolver.resolve(bar.ts)
-        assessment = self.risk.evaluate(
-            stop.distance_points, session, atr, trading_day, pending=self._approved_in_batch
-        )
-        collected.extend(assessment.reasons)
-        if not assessment.approved or assessment.position is None:
-            return self._no_trade(candidate, bar.ts, index, self.confirmation_tf, collected)
-
-        self._approved_in_batch += 1
-        position = assessment.position
-        signal = TradeSignal(
+        return TradeProposal(
+            strategy=self.name,
             setup_id=candidate.id,
             symbol=self.symbol,
             direction=candidate.direction,
@@ -474,59 +481,21 @@ class StrategyEngine:
             stop=stop.price,
             target=target.price,
             stop_ticks=stop.distance_ticks,
+            stop_points=stop.distance_points,
             target_points=target.distance_points,
             rr=target.rr,
-            quantity=position.quantity,
-            risk_amount=position.risk_amount,
-            reward_amount=self.instrument.points_to_currency(
-                target.distance_points, position.quantity
-            ),
-            entry_ts=bar.ts,
-            entry_index=index,
             stop_anchor=stop.anchor_kind,
             target_source=target.source,
-        )
-        self.signals.append(signal)
-
-        collected.append(
-            Reason(
-                R.DECISION_TRADE,
-                True,
-                {
-                    "side": signal.side,
-                    "entry": signal.entry,
-                    "stop": signal.stop,
-                    "target": signal.target,
-                    "rr": round(signal.rr, 2),
-                    "quantity": signal.quantity,
-                },
-            )
-        )
-        log.info(
-            "trade_signal",
-            symbol=self.symbol,
-            setup=candidate.id,
-            side=signal.side,
-            entry=signal.entry,
-            stop=signal.stop,
-            target=signal.target,
-            rr=round(signal.rr, 2),
-            quantity=signal.quantity,
-        )
-
-        return StrategyDecision(
             ts=bar.ts,
             index=index,
-            symbol=self.symbol,
             timeframe=self.confirmation_tf.value,
-            setup_id=candidate.id,
-            direction=candidate.direction,
-            decision=signal.side,
             stage=candidate.stage.value,
             checklist=candidate.checklist(),
             reasons=tuple(collected),
-            signal=signal,
             htf_bias=self._bias.value,
+            session=session,
+            trading_day=trading_day,
+            atr=atr,
         )
 
     def _no_trade(
@@ -556,31 +525,47 @@ class StrategyEngine:
             checklist=candidate.checklist(),
             reasons=tuple(collected),
             htf_bias=self._bias.value,
+            strategy=self.name,
         )
 
     # -------------------------------------------------------------------- Pflege
-    def _prune(self) -> None:
-        """Erledigte Kandidaten begrenzen, offene immer behalten."""
+    def _prune(self, update: TimeframeUpdate, index: int) -> list[StrategyDecision]:
+        """Erledigte Kandidaten begrenzen, offene bis zur Obergrenze behalten.
+
+        Verdraengte Kandidaten bekommen eine PROTOKOLLIERTE Entscheidung. Sie
+        verschwanden frueher lautlos - gemessen an echten Daten 627 Stueck
+        allein in 2024, also rund zwei pro Handelstag. Spec §25 verlangt, dass
+        jedes nicht zustande gekommene Setup einen Grund hat; ohne Eintrag
+        fehlten sie in jeder Auswertung der Frage "warum wird nicht gehandelt?".
+        """
         open_ones = [c for c in self.candidates if c.is_open]
+        produced: list[StrategyDecision] = []
+
         if len(open_ones) > self.params.max_active_setups:
             # Die aeltesten offenen Kandidaten aufgeben - sie sind am weitesten
             # von ihrem ausloesenden Sweep entfernt.
-            open_ones = open_ones[-self.params.max_active_setups :]
+            keep = self.params.max_active_setups
+            for candidate in open_ones[:-keep]:
+                # Die erreichte Stufe VOR dem Toeten festhalten - sonst stuende
+                # im Protokoll ueberall "expired" und man saehe nicht mehr, wie
+                # weit der verdraengte Kandidat gekommen war.
+                reached = candidate.stage.value
+                candidate.kill(SetupStage.EXPIRED, index, update.bar.ts, "crowded_out")
+                produced.append(
+                    self._no_trade(
+                        candidate,
+                        update.bar.ts,
+                        index,
+                        self.setup_tf,
+                        [Reason(R.SETUP_CROWDED_OUT, False, {"stage": reached, "limit": keep})],
+                    )
+                )
+            open_ones = open_ones[-keep:]
+
         closed = [c for c in self.candidates if not c.is_open][-50:]
         self.candidates = sorted(open_ones + closed, key=lambda c: c.id)
+        return produced
 
     # ------------------------------------------------------------------ Abfragen
     def active_candidates(self) -> list[SetupCandidate]:
         return [c for c in self.candidates if c.is_open]
-
-    def recent_decisions(self, limit: int = 50) -> list[StrategyDecision]:
-        return self.decisions[-limit:]
-
-    def stats(self) -> dict[str, int]:
-        trades = sum(1 for d in self.decisions if d.is_trade)
-        return {
-            "decisions": len(self.decisions),
-            "trades": trades,
-            "no_trades": len(self.decisions) - trades,
-            "active_setups": len(self.active_candidates()),
-        }

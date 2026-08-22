@@ -1,7 +1,8 @@
 """Backtest-Lauf (Spec §19).
 
 Der Backtest benutzt EXAKT denselben Analysepfad wie Replay und spaeter der
-Live-Betrieb: `MarketContext.on_base_bar()` und `StrategyEngine.on_updates()`.
+Live-Betrieb: `MarketContext.on_base_bar()` und `StrategyPortfolio.on_updates()`
+mit den Strategien aus `tradex/strategy/registry.py`.
 Es gibt hier keine zweite, "fuer den Backtest optimierte" Regelauslegung -
 genau das macht Spec §29 ("Backtest ≡ Live") ueberpruefbar statt vereinbart.
 Ein Test stellt beide Wege gegenueber und verlangt identische Entscheidungen.
@@ -23,6 +24,15 @@ Zwischen Signal und Fuellung liegt eine Bar. Wuerde erst bei der Fuellung
 gebucht, koennte in diesem Fenster ein zweites Signal dieselbe freie Stelle
 belegen und `max_open_positions` waere wirkungslos. Wird die Order nie gefuellt
 (weil die Daten enden), wird die Buchung zurueckgenommen.
+
+Warum Signale ueber einer Datenluecke verworfen werden
+------------------------------------------------------
+"Die naechste Bar" ist nicht immer "die naechste Minute". Am 19.06.2023
+(Juneteenth) endete der Handel um 11:58 CT und lief erst um 17:00 CT weiter.
+Die Signalbar von 11:58 gilt erst als geschlossen, wenn die naechste Bar
+eintrifft - also fuenf Stunden spaeter. Ohne Gegenmassnahme wird daraus ein
+Einstieg um 17:01 auf Grundlage eines Kursverlaufs vom Vormittag: ein Trade,
+den es nie gab. `max_signal_age_bars` verwirft solche Signale.
 """
 
 from __future__ import annotations
@@ -34,11 +44,11 @@ from tradex.analysis.context import MarketContext
 from tradex.backtest.execution import OpenTrade, SimulatedTrade
 from tradex.config import Config
 from tradex.domain.bars import Bar, BarSeries
-from tradex.domain.enums import ExitReason
+from tradex.domain.enums import ExitReason, Timeframe
 from tradex.domain.instruments import Instrument
 from tradex.logging_setup import get_logger
 from tradex.risk.ledger import OpenPosition, RiskLedger
-from tradex.strategy.engine import StrategyEngine
+from tradex.strategy.registry import build_portfolio
 from tradex.strategy.signal import StrategyDecision, TradeSignal
 
 log = get_logger(__name__)
@@ -66,6 +76,8 @@ class BacktestResult:
     signals: int = 0
     unfilled: int = 0
     """Signale, die nie gefuellt wurden - die Daten endeten dazwischen."""
+    stale: int = 0
+    """Signale, die ueber einer Datenluecke lagen und deshalb verworfen wurden."""
     rejections: dict[str, int] = field(default_factory=dict)
 
     @property
@@ -86,12 +98,18 @@ class Backtester:
         # wirken Tagesverlustlimit und Trade-Obergrenze im Backtest wirklich.
         self.ledger = RiskLedger()
         self.context = MarketContext(self.symbol, instrument, config)
-        self.strategy = StrategyEngine(self.symbol, instrument, config, ledger=self.ledger)
+        self.strategy = build_portfolio(self.symbol, instrument, config, ledger=self.ledger)
 
         self._open: list[OpenTrade] = []
         self._pending: list[OpenTrade] = []
         self._trades: list[SimulatedTrade] = []
         self._unfilled = 0
+        self._stale = 0
+        #: Zusaetzliche Frist ueber die Dauer der Signalbar hinaus, in
+        #: Nanosekunden - siehe `_max_age_ns`.
+        self._grace_ns = (
+            self.params.max_signal_age_bars * config.data.base_timeframe.seconds * 1_000_000_000
+        )
 
     # -------------------------------------------------------------------- Lauf
     def run(self, series: BarSeries, progress: ProgressFn | None = None, every: int = 20_000) -> BacktestResult:
@@ -127,6 +145,7 @@ class Backtester:
             bars=len(series),
             signals=len(self.strategy.signals),
             trades=len(self._trades),
+            stale=self._stale,
             net_pnl=round(sum(t.pnl for t in self._trades), 2),
         )
 
@@ -142,6 +161,7 @@ class Backtester:
             decisions=tuple(self.strategy.decisions),
             signals=len(self.strategy.signals),
             unfilled=self._unfilled,
+            stale=self._stale,
             rejections=dict(sorted(rejections.items(), key=lambda kv: kv[1], reverse=True)),
         )
 
@@ -150,9 +170,16 @@ class Backtester:
         """Offene Orders fuellen und laufende Positionen gegen diese Bar pruefen."""
         if self._pending:
             for trade in self._pending:
+                if self._is_stale(trade, bar):
+                    # Zwischen Signal und Fuellung liegt eine Luecke - die
+                    # Order wird verworfen statt zu einem erfundenen Kurs
+                    # gefuellt.
+                    self.ledger.cancel_position(trade.trade_id, trade.trading_day)
+                    self._stale += 1
+                    continue
                 trade.fill(bar, index)
                 self._sync_ledger_entry(trade)
-            self._open.extend(self._pending)
+                self._open.append(trade)
             self._pending = []
 
         if not self._open:
@@ -170,6 +197,19 @@ class Backtester:
     def _place(self, decision: StrategyDecision, bar: Bar, index: int) -> None:
         """Aus einem Signal eine Order fuer die naechste Bar machen."""
         signal: TradeSignal = decision.signal  # type: ignore[assignment]
+
+        # Ist das Signal schon bei der Ordererteilung veraltet, entstand es vor
+        # einer Luecke. Es wird gar nicht erst gebucht.
+        if bar.ts - signal.entry_ts > self._max_age_ns(signal):
+            self._stale += 1
+            log.info(
+                "signal_stale",
+                symbol=self.symbol,
+                setup=signal.setup_id,
+                gap_minutes=round((bar.ts - signal.entry_ts) / 60e9),
+            )
+            return
+
         session, trading_day, _ = self.context.resolver.resolve(bar.ts)
         trade = OpenTrade(
             signal=signal,
@@ -183,7 +223,7 @@ class Backtester:
 
         self.ledger.open_position(
             OpenPosition(
-                setup_id=signal.setup_id,
+                setup_id=signal.trade_id,
                 direction=signal.direction,
                 entry_ts=signal.entry_ts,
                 entry_price=signal.entry,
@@ -204,9 +244,24 @@ class Backtester:
         else:
             self._pending.append(trade)
 
+    def _max_age_ns(self, signal: TradeSignal) -> int:
+        """Wie alt ein Signal beim Fuellen hoechstens sein darf.
+
+        Der Timestamp bezeichnet die EROEFFNUNG der Signalbar. Eine 5m-Bar ist
+        also schon fuenf Minuten alt, wenn sie ueberhaupt schliesst - in
+        Basis-Bars gerechnet waere sie damit immer "veraltet". Die Dauer der
+        Signalbar gehoert deshalb dazu, und `max_signal_age_bars` ist die
+        Frist DANACH.
+        """
+        return Timeframe.parse(signal.timeframe).seconds * 1_000_000_000 + self._grace_ns
+
+    def _is_stale(self, trade: OpenTrade, bar: Bar) -> bool:
+        """Liegt zwischen Signalbar und dieser Bar mehr als eine Luecke?"""
+        return bar.ts - trade.signal.entry_ts > self._max_age_ns(trade.signal)
+
     def _sync_ledger_entry(self, trade: OpenTrade) -> None:
         """Gebuchten Einstieg auf den tatsaechlichen Fuellkurs nachziehen."""
-        position = self.ledger.position(trade.setup_id)
+        position = self.ledger.position(trade.trade_id)
         if position is not None:
             position.entry_price = trade.entry_price
             position.entry_ts = trade.entry_ts
@@ -214,7 +269,7 @@ class Backtester:
     def _book(self, trade: SimulatedTrade) -> None:
         self._trades.append(trade)
         self.ledger.close_position(
-            trade.setup_id, trade.exit_ts, trade.pnl, trade.trading_day
+            trade.trade_id, trade.exit_ts, trade.pnl, trade.trading_day
         )
 
     def _finish(self, last_bar: Bar, last_index: int) -> None:
@@ -225,7 +280,7 @@ class Backtester:
 
         for trade in self._pending:
             # Nie gefuellt - die Order zaehlt nicht als genommener Trade.
-            self.ledger.cancel_position(trade.setup_id, trade.trading_day)
+            self.ledger.cancel_position(trade.trade_id, trade.trading_day)
             self._unfilled += 1
         self._pending = []
 

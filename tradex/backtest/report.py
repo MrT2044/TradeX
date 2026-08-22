@@ -49,6 +49,9 @@ class BacktestReport:
     trades: tuple[SimulatedTrade, ...]
     trades_total: int
 
+    by_strategy: dict[str, M.Metrics]
+    """Die wichtigste Aufschluesselung, sobald mehrere Strategien laufen:
+    welche hat das Ergebnis getragen, welche nur Gebuehren produziert?"""
     by_session: dict[str, M.Metrics]
     by_direction: dict[str, M.Metrics]
     by_exit: dict[str, M.Metrics]
@@ -59,6 +62,7 @@ class BacktestReport:
     rejections: dict[str, int]
     signals: int
     unfilled: int
+    stale: int
 
     assumptions: dict[str, float | str | int]
     warnings: tuple[str, ...]
@@ -97,6 +101,7 @@ def build(result: BacktestResult, config: Config) -> BacktestReport:
         equity=_thin(M.equity_curve(trades, start_equity), limit),
         trades=tuple(trades[-limit:]),
         trades_total=len(trades),
+        by_strategy=M.breakdown(trades, lambda t: t.strategy, start_equity),
         by_session=M.breakdown(trades, lambda t: t.session, start_equity),
         by_direction=M.breakdown(trades, lambda t: t.side, start_equity),
         by_exit=M.breakdown(trades, lambda t: t.exit_reason.value, start_equity),
@@ -106,6 +111,7 @@ def build(result: BacktestResult, config: Config) -> BacktestReport:
         rejections=dict(result.rejections),
         signals=result.signals,
         unfilled=result.unfilled,
+        stale=result.stale,
         assumptions={
             "entry_fill": params.entry_fill,
             "same_bar_resolution": params.same_bar_resolution,
@@ -113,6 +119,7 @@ def build(result: BacktestResult, config: Config) -> BacktestReport:
             "stop_slippage_ticks": params.stop_slippage_ticks,
             "commission_per_contract": params.commission_per_contract,
             "max_holding_bars": params.max_holding_bars,
+            "max_signal_age_bars": params.max_signal_age_bars,
             "account_size": config.risk.account_size,
             "risk_per_trade_pct": config.risk.risk_per_trade_pct,
             "min_rr": config.risk.min_rr,
@@ -177,6 +184,12 @@ def _warnings(
         messages.append(
             f"{result.unfilled} Signal(e) wurden nie gefuellt, weil die Daten davor endeten."
         )
+    if result.stale:
+        messages.append(
+            f"{result.stale} Signal(e) lagen ueber einer Datenluecke (Feiertag, "
+            "Handelsunterbrechung) und wurden verworfen statt zu einem Kurs Stunden "
+            "spaeter gefuellt."
+        )
 
     if first_half.trades and second_half.trades:
         gap = abs(first_half.expectancy_r - second_half.expectancy_r)
@@ -210,10 +223,12 @@ def to_dict(report: BacktestReport) -> dict:
         "warnings": list(report.warnings),
         "signals": report.signals,
         "unfilled": report.unfilled,
+        "stale": report.stale,
         "trades_total": report.trades_total,
         "overall": asdict(report.overall),
         "in_sample": asdict(report.in_sample),
         "out_of_sample": asdict(report.out_of_sample),
+        "by_strategy": {k: asdict(v) for k, v in report.by_strategy.items()},
         "by_session": {k: asdict(v) for k, v in report.by_session.items()},
         "by_direction": {k: asdict(v) for k, v in report.by_direction.items()},
         "by_exit": {k: asdict(v) for k, v in report.by_exit.items()},
@@ -294,6 +309,7 @@ def render_text(report: BacktestReport) -> str:
     out.append("")
 
     for title, table in (
+        ("Nach Strategie", report.by_strategy),
         ("Nach Session", report.by_session),
         ("Nach Richtung", report.by_direction),
         ("Nach Ausstiegsart", report.by_exit),
@@ -322,8 +338,10 @@ def render_text(report: BacktestReport) -> str:
     for key, value in report.assumptions.items():
         out.append(_line(key, str(value)))
     out.append("")
-    out.append(f"  Signale {report.signals:,}   davon gefuellt {report.trades_total:,}   "
-               f"nie gefuellt {report.unfilled:,}")
+    out.append(
+        f"  Signale {report.signals:,}   davon gefuellt {report.trades_total:,}   "
+        f"nie gefuellt {report.unfilled:,}   ueber Datenluecke verworfen {report.stale:,}"
+    )
     out.append("")
     out.append(f"  erstellt {datetime.now():%Y-%m-%d %H:%M}  ({report.backtest_version})")
     return "\n".join(out)

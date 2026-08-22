@@ -200,6 +200,39 @@ class StrategyConfig(_Frozen):
     max_active_setups: int = Field(default=4, ge=1)
 
 
+class OpeningRangeConfig(_Frozen):
+    """Opening Range Breakout - die zweite Strategie im Portfolio.
+
+    Bewusst wenige Parameter. Jeder zusaetzliche Schalter ist eine weitere
+    Dimension, in der man sich an die Vergangenheit anpassen kann.
+    """
+
+    enabled: bool = True
+    timeframe: Timeframe = Timeframe.M5
+    sessions: tuple[SessionName, ...] = (SessionName.LONDON, SessionName.NY_AM)
+    range_minutes: int = Field(default=30, ge=1)
+    min_range_atr_mult: float = Field(default=0.8, ge=0)
+    """Unter dieser Spannenbreite waere ein Ausbruch nur Rauschen."""
+    max_range_ticks: float = Field(default=400, gt=0)
+    stop_buffer_ticks: float = Field(default=4, ge=0)
+    target_range_mult: float = Field(default=3.0, gt=0)
+    """Ziel als Vielfaches der Spannenbreite.
+
+    Muss GROESSER als `risk.min_rr` sein. Der Stop liegt auf der Gegenseite der
+    Spanne, das erreichbare CRV ist deshalb `mult * W / (W + Puffer)` und damit
+    immer kleiner als `mult`. Ein Wert von 2.0 bei min_rr 2.0 macht die
+    Strategie rechnerisch handlungsunfaehig - `risk/consistency.py` meldet das."""
+    max_trades_per_session: int = Field(default=2, ge=1)
+    max_tracked_sessions: int = Field(default=8, ge=1)
+
+    @field_validator("sessions", mode="before")
+    @classmethod
+    def _parse_sessions(cls, value: Any) -> Any:
+        if isinstance(value, list | tuple):
+            return tuple(SessionName(str(item)) for item in value)
+        return value
+
+
 class StopsConfig(_Frozen):
     """Spec §11."""
 
@@ -300,6 +333,17 @@ class BacktestConfig(_Frozen):
     #: ueber Tage offen bleiben, was zu einem Intraday-Modell nicht passt.
     max_holding_bars: int = Field(default=480, ge=0)
 
+    #: Hoechstabstand in Basis-Intervallen zwischen der Bar, auf der das Signal
+    #: entstand, und der Bar, auf der gefuellt wird.
+    #:
+    #: Im Normalfall sind es genau zwei: eine Bar, bis die Signalbar ueberhaupt
+    #: als geschlossen gilt (Invariante 1), und eine bis zur Fuellung. Mehr
+    #: bedeutet immer eine Luecke - Feiertag, Handelsunterbrechung, fehlende
+    #: Daten. Eine Order ueber so eine Luecke hinweg zu fuellen erfindet einen
+    #: Einstieg, den es nicht gab: der ausloesende Kursverlauf liegt dann
+    #: Stunden zurueck. Solche Signale werden verworfen, nicht gehandelt.
+    max_signal_age_bars: int = Field(default=2, ge=1)
+
     #: Unterhalb dieser Trade-Anzahl weist der Bericht seine Kennzahlen als
     #: nicht belastbar aus, statt sie kommentarlos zu zeigen.
     min_trades_for_significance: int = Field(default=30, ge=1)
@@ -340,6 +384,7 @@ class Config(_Frozen):
     timeframes: TimeframesConfig
     analysis: AnalysisConfig
     strategy: StrategyConfig = StrategyConfig()
+    opening_range: OpeningRangeConfig = OpeningRangeConfig()
     stops: StopsConfig = StopsConfig()
     targets: TargetsConfig = TargetsConfig()
     trading_windows: TradingWindowsConfig = TradingWindowsConfig()
@@ -370,6 +415,12 @@ class Config(_Frozen):
             raise ValueError(
                 "strategy.confirmation_timeframe muss kleiner oder gleich "
                 "setup_timeframe sein - die Bestaetigung ist die feinere Ebene"
+            )
+        if self.opening_range.enabled and self.opening_range.timeframe not in available:
+            configured = ", ".join(tf.value for tf in self.timeframes.all)
+            raise ValueError(
+                f"opening_range.timeframe={self.opening_range.timeframe.value} ist in "
+                f"`timeframes` nicht enthalten (konfiguriert: {configured})"
             )
         return self
 
@@ -405,14 +456,24 @@ def _read_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
+def resolved_config_path() -> Path:
+    """Die Datei, aus der `load_config()` ohne Argument liest.
+
+    Wer den `config_hash` speichert, MUSS diesen Pfad benutzen und nicht
+    `default.yaml` annehmen: sonst traegt ein Lauf unter einer
+    Variantenkonfiguration den Hash der Standardkonfiguration - und das Archiv
+    behauptet etwas, das nie gerechnet wurde.
+    """
+    return Path(os.environ.get("TRADEX_CONFIG", DEFAULT_CONFIG_PATH))
+
+
 def load_config(path: Path | None = None) -> Config:
     """Konfiguration laden und validieren.
 
     Der Pfad kann ueber die Umgebungsvariable TRADEX_CONFIG ueberschrieben werden
     (z.B. fuer Backtest-Varianten in Phase 4).
     """
-    resolved = path or Path(os.environ.get("TRADEX_CONFIG", DEFAULT_CONFIG_PATH))
-    return Config.model_validate(_read_yaml(resolved))
+    return Config.model_validate(_read_yaml(path or resolved_config_path()))
 
 
 def _parse_time(raw: str) -> time:

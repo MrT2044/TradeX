@@ -24,7 +24,7 @@ from tradex.backtest.report import BacktestReport
 from tradex.backtest.report import build as build_report
 from tradex.backtest.runner import run_backtest
 from tradex.backtest.store import BacktestStore
-from tradex.config import Config, get_instrument, get_instruments
+from tradex.config import Config, get_instrument, get_instruments, resolved_config_path
 from tradex.data.integrity import IntegrityReport, check
 from tradex.data.provider import MarketDataProvider, ProviderRegistry
 from tradex.data.replay_provider import ReplayProvider
@@ -38,7 +38,8 @@ from tradex.persistence.db import init_database
 from tradex.persistence.decision_log import DecisionLog, utc_now_iso
 from tradex.persistence.models import DecisionRecord
 from tradex.risk.consistency import ConsistencyIssue, check_configuration
-from tradex.strategy.engine import StrategyEngine
+from tradex.strategy.portfolio import StrategyPortfolio
+from tradex.strategy.registry import build_portfolio
 from tradex.strategy.setup import SetupCandidate
 from tradex.strategy.signal import StrategyDecision, TradeSignal
 
@@ -66,7 +67,7 @@ class SymbolState:
     symbol: str
     instrument: Instrument
     context: MarketContext
-    strategy: StrategyEngine
+    strategy: StrategyPortfolio
     base: BarSeries
     cursor: int = 0
     """Anzahl bereits in die Analyse gegebener Basis-Bars."""
@@ -88,7 +89,9 @@ class TradexService:
 
     def __init__(self, config: Config, config_path: Path | None = None) -> None:
         self.config = config
-        self.config_path = config_path or (Path(__file__).resolve().parent.parent / "config" / "default.yaml")
+        # Nicht fest default.yaml annehmen: laeuft der Dienst unter
+        # TRADEX_CONFIG, muss der gespeicherte Hash zu DIESER Datei gehoeren.
+        self.config_path = config_path or resolved_config_path()
         self.store = BarStore(config.path(config.data.parquet_dir))
         self.database = config.path(config.data.database)
         init_database(self.database)
@@ -174,7 +177,7 @@ class TradexService:
             symbol=symbol,
             instrument=instrument,
             context=MarketContext(symbol, instrument, self.config),
-            strategy=StrategyEngine(symbol, instrument, self.config),
+            strategy=build_portfolio(symbol, instrument, self.config),
             base=series,
             integrity=report,
         )
@@ -264,7 +267,7 @@ class TradexService:
         """Analyse zuruecksetzen, Daten behalten."""
         state = self.state(symbol)
         state.context = MarketContext(state.symbol, state.instrument, self.config)
-        state.strategy = StrategyEngine(state.symbol, state.instrument, self.config)
+        state.strategy = build_portfolio(state.symbol, state.instrument, self.config)
         state.cursor = 0
         state.last_updates = []
         state.last_decisions = []
@@ -281,7 +284,7 @@ class TradexService:
         return self.state(symbol).context.forming(timeframe)
 
     # ------------------------------------------------------------------ Strategie
-    def strategy(self, symbol: str) -> StrategyEngine:
+    def strategy(self, symbol: str) -> StrategyPortfolio:
         return self.state(symbol).strategy
 
     def decisions(self, symbol: str, limit: int = 50) -> list[StrategyDecision]:

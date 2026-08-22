@@ -29,6 +29,12 @@ const STATE_WORD: Record<string, string> = {
   range: 'seitwaerts',
 };
 
+/** Welche Strategie - siehe tradex/strategy/registry.py. */
+export const STRATEGY_LABEL: Record<string, string> = {
+  ict_chain: 'Pflichtkette (ICT)',
+  opening_range: 'Eroeffnungsspanne',
+};
+
 /** Wodurch eine simulierte Position endete - siehe tradex/domain/enums.py. */
 export const EXIT_REASON: Record<string, string> = {
   stop: 'Stop',
@@ -86,6 +92,12 @@ export const reasonText: Record<string, (p: ReasonParams) => string> = {
   'setup.invalidated_bias_flip': (p) =>
     `Die Gesamtrichtung hat auf ${BIAS_WORD[String(p.bias)] ?? p.bias} gedreht`,
   'setup.expired': (p) => `Zeitfenster abgelaufen (${p.age_bars} Bars in Stufe "${p.stage}")`,
+  'setup.crowded_out': (p) =>
+    `Von neueren Setups verdraengt - hoechstens ${p.limit} gleichzeitig (war in Stufe "${p.stage}")`,
+
+  'opening_range.breakout': (p) =>
+    `Ausbruch aus der Eroeffnungsspanne der ersten ${p.minutes} Minuten` +
+    ` (${price(p.low)} bis ${price(p.high)}, ${num(p.width_ticks, 0)} Ticks breit)`,
 
   'stop.placed': (p) =>
     `Stop bei ${price(p.price)} (${num(p.ticks, 0)} Ticks, Anker: ${STOP_ANCHOR[String(p.anchor)] ?? p.anchor})`,
@@ -149,6 +161,7 @@ export const reasonLabel: Record<string, string> = {
   'setup.invalidated_beyond_sweep': 'Kurs wieder hinter das Sweep-Extrem gefallen',
   'setup.invalidated_bias_flip': 'Gesamtrichtung hat gedreht',
   'setup.expired': 'Zeitfenster abgelaufen',
+  'setup.crowded_out': 'Von neueren Setups verdraengt',
   'mss.missing': 'Struktur hat nicht rechtzeitig gedreht',
   'target.rr_too_low': 'Chance-Risiko-Verhaeltnis zu schlecht',
   'target.none': 'Kein brauchbares Ziel',
@@ -310,12 +323,16 @@ export const de = {
       'Erste und zweite Haelfte getrennt gerechnet. Weichen sie stark ab, haengt das Ergebnis eher am Zeitraum als an der Regel.',
     firstHalf: 'erste Haelfte',
     secondHalf: 'zweite Haelfte',
+    byStrategy: 'Nach Strategie',
+    byStrategyHint:
+      'Mehrere Strategien laufen parallel am selben Konto. Diese Aufstellung zeigt, welche das Ergebnis getragen hat - und welche nur Gebuehren produziert.',
     bySession: 'Nach Session',
     byDirection: 'Nach Richtung',
     byExit: 'Nach Ausstiegsart',
     signals: 'Signale',
     filled: 'gefuellt',
     unfilled: 'nie gefuellt',
+    stale: 'ueber Datenluecke verworfen',
     assumptions: 'Annahmen der Ausfuehrung',
     assumptionsHint:
       'Ein Ergebnis ohne seine Ausfuehrungsannahmen ist nicht interpretierbar. Sie stehen in config/default.yaml unter "backtest".',

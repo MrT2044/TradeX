@@ -30,7 +30,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tradex.backtest.report import build, render_text, to_dict
 from tradex.backtest.runner import run_backtest
 from tradex.backtest.store import BacktestStore
-from tradex.config import get_config, get_instrument
+from tradex.config import get_config, get_instrument, resolved_config_path
 from tradex.data.integrity import check
 from tradex.data.sessions import SessionCalendar
 from tradex.data.store import BarStore
@@ -106,8 +106,11 @@ def main() -> int:
     if args.save:
         database = config.path(config.data.database)
         init_database(database)
+        # Der Hash MUSS von der tatsaechlich geladenen Datei stammen. Laeuft der
+        # Backtest unter TRADEX_CONFIG mit einer Variante, wuerde ein fest
+        # verdrahtetes default.yaml den Lauf falsch etikettieren.
         with DecisionLog(database) as log:
-            config_hash = log.register_config(config.path(Path("config/default.yaml")))
+            config_hash = log.register_config(resolved_config_path())
         with BacktestStore(database) as backtests:
             run_id = backtests.record(report, config_hash, STRATEGY_VERSION, args.notes)
         print(f"  Lauf gespeichert: id={run_id}  config={config_hash}")

@@ -37,6 +37,26 @@ def test_default_config_laedt(config: Config):
     )
 
 
+def test_messkonfiguration_weicht_nur_beim_konto_ab():
+    """`backtest_edge.yaml` darf sich NUR in `risk.account_size` unterscheiden.
+
+    Die Variante existiert, um die Edge-Frage vom Risikobudget zu trennen -
+    nicht, um nebenbei Schwellenwerte zu veraendern. Ohne diesen Test wuerden
+    die beiden Dateien mit der Zeit unbemerkt auseinanderlaufen und aus der
+    Messkonfiguration wuerde eine zweite Regelfassung. Genau dann waeren die
+    Ergebnisse beider Laeufe nicht mehr vergleichbar.
+    """
+    standard = load_config(PROJECT_ROOT / "config" / "default.yaml").model_dump()
+    variant = load_config(PROJECT_ROOT / "config" / "backtest_edge.yaml").model_dump()
+
+    assert variant["risk"]["account_size"] == 25_000.0
+    assert standard["risk"]["account_size"] == 10_000.0
+
+    standard["risk"] = {**standard["risk"], "account_size": None}
+    variant["risk"] = {**variant["risk"], "account_size": None}
+    assert standard == variant, "die Messkonfiguration weicht in mehr als dem Konto ab"
+
+
 def test_unbekannter_schluessel_wird_abgelehnt(tmp_path: Path):
     """extra="forbid": ein Tippfehler in der YAML darf nicht still ignoriert werden.
 

@@ -15,7 +15,7 @@
 
 import type { BacktestReport, EquityPoint, Metrics } from '../api/types';
 import { Info } from '../components/Info';
-import { EXIT_REASON, de, translateReasonLabel } from '../i18n/de';
+import { EXIT_REASON, STRATEGY_LABEL, de, translateReasonLabel } from '../i18n/de';
 
 interface Props {
   report: BacktestReport | null;
@@ -69,6 +69,7 @@ function Report({ report }: { report: BacktestReport }) {
         <code>
           {report.signals} · {report.trades_total} {de.backtest.filled}
           {report.unfilled > 0 ? ` · ${report.unfilled} ${de.backtest.unfilled}` : ''}
+          {report.stale > 0 ? ` · ${report.stale} ${de.backtest.stale}` : ''}
         </code>
       </div>
 
@@ -129,6 +130,17 @@ function Report({ report }: { report: BacktestReport }) {
               [de.backtest.firstHalf, report.in_sample],
               [de.backtest.secondHalf, report.out_of_sample],
             ]}
+          />
+
+          <h3 className="panel__subtitle">
+            {de.backtest.byStrategy}
+            <Info text={de.backtest.byStrategyHint} />
+          </h3>
+          <Table
+            rows={Object.entries(report.by_strategy).map(([name, value]) => [
+              STRATEGY_LABEL[name] ?? name,
+              value,
+            ])}
           />
 
           <h3 className="panel__subtitle">{de.backtest.bySession}</h3>

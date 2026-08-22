@@ -16,6 +16,14 @@ class TradeSignal:
     ausgefuehrt - das Signal wird berechnet, protokolliert und angezeigt.
     """
 
+    trade_id: int
+    """Kontoweit eindeutige Kennung, vergeben vom Portfolio.
+
+    `setup_id` zaehlt JE STRATEGIE - Kette #5 und Opening-Range #5 sind zwei
+    verschiedene Setups mit derselben Nummer. Als Schluessel im Risikobuch
+    waere das eine Verwechslung mit Ansage: die eine Position wuerde die andere
+    schliessen. Deshalb eine eigene, durchlaufende Nummer.
+    """
     setup_id: int
     symbol: str
     direction: Direction
@@ -32,6 +40,18 @@ class TradeSignal:
     entry_index: int
     stop_anchor: str
     target_source: str
+    timeframe: str = "1m"
+    """Zeitebene der Signalbar.
+
+    Wird gebraucht, um zu beurteilen, ob ein Signal noch aktuell ist: eine
+    5m-Bar gilt erst fuenf Minuten nach ihrer Eroeffnung als geschlossen. In
+    Basis-Bars gerechnet waere sie damit immer "veraltet"."""
+    strategy: str = "ict_chain"
+    """Welche Strategie den Vorschlag gemacht hat.
+
+    Ab mehreren Strategien am selben Konto ist das die wichtigste Spalte der
+    Auswertung: ohne sie liesse sich nicht sagen, welche davon das Ergebnis
+    getragen hat und welche nur Gebuehren produziert."""
 
     @property
     def side(self) -> str:
@@ -65,6 +85,7 @@ class StrategyDecision:
     reasons: tuple[Reason, ...]
     signal: TradeSignal | None = None
     htf_bias: str = "neutral"
+    strategy: str = "ict_chain"
 
     @property
     def is_trade(self) -> bool:

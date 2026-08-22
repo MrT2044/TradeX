@@ -100,6 +100,30 @@ def check_configuration(config: Config, instrument: Instrument) -> list[Consiste
             )
         )
 
+    # Opening Range: die Geometrie begrenzt das erreichbare CRV nach oben.
+    #
+    #   Stop  = Spannenbreite W + Puffer   (Gegenseite der Spanne)
+    #   Ziel  = mult * W
+    #   CRV   = mult * W / (W + Puffer)  <  mult
+    #
+    # Ist `target_range_mult` nicht groesser als `min_rr`, kann die Strategie
+    # das Mindest-CRV NIE erreichen - sie erzeugt dann Vorschlaege, die
+    # ausnahmslos verworfen werden. Genau das ist beim ersten Lauf passiert:
+    # 387 Ablehnungen wegen "CRV zu niedrig", null Trades.
+    if config.opening_range.enabled and config.opening_range.target_range_mult <= config.risk.min_rr:
+        issues.append(
+            ConsistencyIssue(
+                code="opening_range.rr_unreachable",
+                severity="error",
+                message=(
+                    f"opening_range.target_range_mult ({config.opening_range.target_range_mult}) "
+                    f"ist nicht groesser als risk.min_rr ({config.risk.min_rr}). Der Stop liegt "
+                    "auf der Gegenseite der Spanne, das CRV bleibt damit rechnerisch immer "
+                    "unter dem Vielfachen - die Strategie kann NIE einen Trade erzeugen."
+                ),
+            )
+        )
+
     if config.risk.max_daily_loss_amount < config.risk.risk_per_trade_amount:
         issues.append(
             ConsistencyIssue(

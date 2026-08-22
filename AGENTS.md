@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Arbeitshinweise für dieses Repository. Was das Projekt *ist*, steht im
 [README](README.md) — hier steht, was beim *Arbeiten daran* zu beachten ist.
@@ -52,34 +52,6 @@ Vor jedem Commit: **ruff sauber + alle Tests grün + `npm run typecheck`**.
 
 ---
 
-## Strategien
-
-Seit dem Day-Trading-Umbau laufen **mehrere Strategien parallel an einem
-Konto**. Drei Regeln dazu:
-
-1. **Strategien schlagen vor, das Portfolio entscheidet.** Positionsgröße,
-   Tagesgrenzen und Handelsfenster gehören `portfolio.py`, weil sie für das
-   ganze Konto gelten. Rechnete jede Strategie ihre eigene Größe, wäre das
-   tatsächliche Gesamtrisiko die Summe der Einzelbudgets.
-2. **Neue Strategien werden in `registry.py` eingetragen — nirgends sonst.**
-   Sonst liefe der Backtest irgendwann mit einer anderen Zusammenstellung als
-   der Live-Betrieb (Spec §29, eine Ebene höher).
-3. **`setup_id` zählt je Strategie und kollidiert.** Als Schlüssel im
-   Risikobuch dient `trade_id`, kontoweit eindeutig. Hat schon zugeschlagen:
-   Kette #5 und Opening-Range #5 hätten sich gegenseitig geschlossen.
-
-Eine neue Strategie ist eine **Hypothese**, kein Feature. Sie wird vor der
-ersten Messung festgelegt und danach ehrlich vermessen — auch mit dem Ergebnis
-„kein Edge". Was nicht passiert: Werte verändern, bis der Backtest gefällt.
-
-**Prüfen, ob eine Strategie überhaupt auslösen KANN.** Der Opening Range
-Breakout stand anfangs auf `target_range_mult: 2.0` bei `min_rr: 2.0` — der
-Stop liegt auf der Gegenseite der Spanne, das erreichbare CRV ist deshalb
-`mult × W / (W + Puffer)` und damit *immer* kleiner als `mult`. Ergebnis: 387
-Ablehnungen, null Trades, und ein Backtest, der brav „kein Edge" gemeldet
-hätte, obwohl die Regel nie zum Zug kam. `risk/consistency.py` meldet diesen
-Fall jetzt.
-
 ## Die vier Invarianten
 
 Sie machen Spec §29 („Backtest ≡ Live") technisch erzwingbar. **Nichts davon
@@ -124,14 +96,6 @@ ausschließlich die *Ausführung* hinzufügen, nie eine zweite Regelauslegung.
   zugeschlagen: Stops füllten *besser* als ihr Kurs, was aus dem pessimistischen
   Simulator einen geschönten machte. Deshalb `_slip_entry` **und** `_slip_exit`
   in `tradex/backtest/execution.py`.
-- **„Die nächste Bar" ist nicht „die nächste Minute".** Eine Bar gilt erst als
-  geschlossen, wenn die *nächste* eintrifft (Invariante 1). Fällt der Handel
-  dazwischen aus, liegen dazwischen Stunden. An echten Daten aufgefallen:
-  Juneteenth 2023, Handelsende 11:58 CT, Fortsetzung 17:00 CT — ein Signal vom
-  Vormittag wurde um 17:01 gefüllt. `backtest.max_signal_age_bars` verwirft
-  solche Signale. **Achtung:** Sämtliche Zeitfenster der Strategie
-  (`sweep_max_age_bars`, `fvg_max_age_bars`, …) zählen Bars, nicht Zeit — sie
-  sind für Lücken blind. Ob das so bleiben soll, ist eine offene Frage.
 - **Provider-Abstraktion respektieren.** Die Engine darf nie eine konkrete
   Datenquelle kennen. `ProviderCapabilities` macht explizit, was eine Quelle
   kann — die Kernstrategie darf sich nur auf Fähigkeiten stützen, die jede
@@ -226,11 +190,7 @@ tradex/domain/      Bars, Instrumente, Enums — keine I/O
 tradex/data/        Provider, Parquet-Store, Sessions, Aggregation, Integrität
 tradex/analysis/    Swings, Struktur, FVG, Liquidität, Displacement, Bias
                     → MarketContext = der einzige Analysepfad
-tradex/strategy/    base.py       Vertrag: Strategie schlaegt vor, Portfolio entscheidet
-                    chain.py      Strategie 1 — ICT-Pflichtkette (niederfrequent)
-                    opening_range Strategie 2 — Ausbruch aus der Eroeffnungsspanne
-                    portfolio.py  mehrere Strategien, EINE Risikopruefung
-                    registry.py   welche Strategien laufen — an genau einer Stelle
+tradex/strategy/    Pflichtkette als Zustandsmaschine, Stop, Ziel
 tradex/risk/        Größenberechnung, Tagesgrenzen, Konsistenzprüfung
 tradex/backtest/    Ausführungssimulation, Kennzahlen, Bericht, Laufarchiv
 tradex/api/         FastAPI + DTOs = einziger UI-Vertrag
@@ -244,11 +204,4 @@ Das Schema der Backtest-Tabellen steht in `tradex/persistence/db.py`
 Persistenzschicht darf nichts über Backtests wissen, sonst zeigt eine untere
 Schicht auf eine obere.
 
-Phasen 1–4 fertig. Aktuell läuft **Phase 4b: Day-Trading-Umbau** (Registry
-fertig; offen: Multi-Instrument, News-Filter, Musterstatistik). Sie stand nicht
-im ursprünglichen Plan — Phase 4 hat sie erzwungen, weil sie erstmals gemessen
-hat, dass die Pflichtkette nur ~10 Trades im Jahr erzeugt.
-
-**Phase 5 (Broker-Anschluss über NinjaTrader) wartet bewusst.** Sie ist der
-einzige Baustein, der Geld kostet, wenn die Regel verliert. Stand: +0,125 R über
-147 Trades, Vertrauensband −0,14 bis +0,39 — null ist eingeschlossen.
+Phasen 1–4 fertig. Als Nächstes **Phase 5: NinjaTrader Paper Trading**.
