@@ -338,17 +338,38 @@ def analyse(
         in_sample_trades=len(in_sample),
         in_sample_mean_r=sum(t.r_multiple for t in in_sample) / len(in_sample),
         out_of_sample_trades=len(out_of_sample),
-        warnings=_warnings(cells, len(tested_p), len(in_sample), min_trades, alpha),
+        warnings=_warnings(
+            cells,
+            len(tested_p),
+            len(in_sample),
+            min_trades,
+            alpha,
+            symbols=len({t.symbol for t in in_sample}),
+        ),
     )
 
 
 def _warnings(
-    cells: Sequence[Cell], hypotheses: int, in_sample: int, min_trades: int, alpha: float
+    cells: Sequence[Cell],
+    hypotheses: int,
+    in_sample: int,
+    min_trades: int,
+    alpha: float,
+    symbols: int,
 ) -> tuple[str, ...]:
     messages: list[str] = [
         "Diese Auswertung sucht in der VERGANGENHEIT. Was hier uebrig bleibt, ist "
         "eine Hypothese fuer den naechsten Zeitraum, kein Befund."
     ]
+    if symbols > 1:
+        # Der t-Test rechnet mit 1/Wurzel(n) und setzt dabei unabhaengige
+        # Beobachtungen voraus. Ein MNQ- und ein MES-Trade zur selben Stunde
+        # koennen aber derselbe Trade in zwei Verkleidungen sein.
+        messages.append(
+            f"{symbols} Instrumente in einer Stichprobe: die Baender und p-Werte unten "
+            "setzen unabhaengige Trades voraus. Korrelierte Maerkte verletzen das - die "
+            "wahre Unsicherheit liegt UEBER dem, was hier steht."
+        )
     if hypotheses == 0:
         messages.append(
             f"Keine einzige Gruppe erreicht {min_trades} Trades - es wurde nichts "
@@ -367,10 +388,14 @@ def _warnings(
             "'signifikant' herausgekommen."
         )
     elif not survivors:
+        wording = (
+            "Ein Muster haelt der Korrektur stand, bestaetigt sich aber nicht"
+            if len(significant) == 1
+            else f"{len(significant)} Muster halten der Korrektur stand, aber keines bestaetigt sich"
+        )
         messages.append(
-            f"{len(significant)} Muster halten der Korrektur stand, aber keines "
-            "bestaetigt sich im hinteren Abschnitt. Das spricht fuer den Zeitraum "
-            "und gegen die Regel."
+            f"{wording} im hinteren Abschnitt. Das spricht fuer den Zeitraum und "
+            "gegen die Regel."
         )
     if in_sample < min_trades * 3:
         messages.append(

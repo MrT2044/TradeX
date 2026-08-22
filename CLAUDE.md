@@ -34,14 +34,24 @@ Der wichtigste Kontext für jede Arbeit hier:
 | Kette, 1m, 2024 | 152 | −0,194 R | −0,44 … +0,05 |
 | Kette + Eröffnungsspanne, 2024 | 147 | +0,125 R | −0,14 … +0,39 |
 | Kette + Eröffnungsspanne, 1m, 2023–2026 | 426 | +0,016 R | −0,14 … +0,17 |
+| dieselbe Regel, **MNQ + MES**, 2023–2026 (Lauf `id=11`) | 685 | −0,028 R | −0,14 … +0,09 |
 
-Die letzte Zeile ist die belastbarste Messung, die es bisher gibt — und die
-ernüchterndste: mit der dreifachen Stichprobe schrumpft der Erwartungswert von
-+0,125 R auf +0,016 R. Die Musterstatistik über denselben Lauf testet 24
-Untergruppen; **keine** übersteht die Korrektur. Die beiden auffälligsten
-(Einstieg 08 UTC mit +0,34 R, 07 UTC mit −0,33 R) fallen im hinteren Abschnitt
-auf +0,04 R und +0,03 R zusammen — ein Lehrbuchfall dafür, warum die Korrektur
-gerechnet wird.
+Die beiden letzten Zeilen sind die belastbarsten Messungen, die es gibt — und
+die ernüchterndsten. Mit der dreifachen Stichprobe schrumpft der Erwartungswert
+von +0,125 R auf +0,016 R; mit dem zweiten Instrument kippt er ins Minus. Der
+Zugewinn kommt fast vollständig aus der Eröffnungsspanne (645 von 685 Trades);
+die Kette liefert weiterhin 40 Trades in 3,6 Jahren.
+
+**Die Musterstatistik hat beim Zwei-Instrumente-Lauf ihren ersten echten
+Treffer geliefert — und ihn selbst wieder kassiert.** Einstieg um 07 UTC:
+−0,458 R über 104 Trades, q = 0,009, also auch nach Korrektur über 30 Tests
+signifikant. Im hinteren Abschnitt: **+0,12 R über 76 Trades**. Das Vorzeichen
+dreht. Ohne Gegenprobe wäre daraus die Regel „vor 08 UTC nicht handeln"
+geworden — auf Grundlage von etwas, das im nächsten Zeitraum das Gegenteil tut.
+
+Beim Einzelinstrument-Lauf übersteht keine der 24 getesteten Untergruppen die
+Korrektur; die auffälligsten (08 UTC +0,34 R, 07 UTC −0,33 R) fallen out of
+sample auf +0,04 R und +0,03 R zusammen.
 
 **Alle Zahlen stammen aus `config/backtest_edge.yaml`** (25.000 statt
 10.000 Konto). Mit `default.yaml` liefert derselbe Lauf über 2024 **6 Trades** —
@@ -70,7 +80,7 @@ UI beim ersten Start, öffnet das Fenster; Argumente werden durchgereicht).
 reine LF-Dateien nur teilweise verarbeitet und `goto` dabei still bricht.
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/ -q      # Tests (aktuell 363)
+.\.venv\Scripts\python.exe -m pytest tests/ -q      # Tests (aktuell 364)
 .\.venv\Scripts\python.exe -m ruff check tradex tests scripts
 .\.venv\Scripts\python.exe -m tradex.shell          # Desktop-Fenster
 .\.venv\Scripts\python.exe -m tradex.shell --server # nur Engine, Port 8765
@@ -322,6 +332,18 @@ in einem Skript nicht als Erfolg durchgehen darf.
 **Mehrere Instrumente sind nicht mehrfach so viel Information.** S&P und Nasdaq
 sind stark korreliert; die Vertrauensbänder schrumpfen langsamer als die
 Trade-Anzahl wächst. Für echten Zugewinn braucht es weniger korrelierte Märkte.
+
+Inzwischen gemessen (Lauf `id=11`): 426 → 685 Trades, das Band schrumpft von
+0,31 R auf 0,23 R Breite. **Das ist genau die Schrumpfung, die unabhängige
+Stichproben liefern würden — und deshalb ein Warnzeichen, kein Erfolg.** Der
+t-Test rechnet mit ⁠1/√n und weiß nichts davon, dass ein MNQ- und ein
+MES-Trade zur selben Stunde derselbe Trade in zwei Verkleidungen sein können.
+Das ausgewiesene Band ist bei zwei korrelierten Märkten also **zu schmal**;
+die wahre Unsicherheit liegt darüber. Wie weit, sagt keine der Zahlen hier —
+das wäre erst über gemeinsame Zeitfenster zu schätzen.
+
+Die aussagekräftigere Zahl steht in der Aufschlüsselung: MES bringt −0,105 R,
+MNQ +0,025 R. Die Regel trägt nicht überall.
 
 ### Dukascopy — Fallen, die schon zugeschlagen haben
 

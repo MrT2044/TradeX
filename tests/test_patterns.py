@@ -335,6 +335,23 @@ def test_bericht_ist_reproduzierbar():
     assert patterns.render_text(first) == patterns.render_text(second)
 
 
+def test_mehrere_instrumente_werden_als_einschraenkung_gemeldet():
+    """Der t-Test setzt unabhaengige Beobachtungen voraus.
+
+    MNQ und MES sind stark korreliert: zwei Trades zur selben Stunde koennen
+    derselbe Trade in zwei Verkleidungen sein. Die Baender sind dann zu schmal,
+    und das muss dabeistehen - sonst liest sich die groessere Stichprobe wie
+    ein Gewinn an Sicherheit, den es nicht gibt.
+    """
+    einzeln = noise(200)
+    gemischt = einzeln + [
+        make_trade(4000 + i, _NOISE[i % 4], symbol="MES_PROXY", minutes=i * 30 + 15)
+        for i in range(200)
+    ]
+    assert not any("Instrumente" in w for w in analyse(einzeln).warnings)
+    assert any("Instrumente" in w for w in analyse(gemischt).warnings)
+
+
 def test_ausgabe_nennt_die_zahl_der_tests():
     """Ohne sie ist ein q-Wert nicht einzuordnen."""
     text = patterns.render_text(analyse(noise(200)))
