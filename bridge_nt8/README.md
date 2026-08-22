@@ -1,8 +1,25 @@
-# NinjaTrader-8-Bridge — Spezifikation (Phase 5)
+# NinjaTrader-8-Bridge — Spezifikation und AddOn (Phase 5)
 
-**Stand: noch nicht implementiert.** Dieses Dokument legt die Schnittstelle fest,
-damit Phase 5 ohne Umbau an der Engine andocken kann. Die Gegenstelle in Python
-existiert bereits als Stub: [`tradex/data/nt8_provider.py`](../tradex/data/nt8_provider.py).
+| Teil | Stand |
+|---|---|
+| Protokoll (dieses Dokument) | festgelegt |
+| **Python-Client** [`tradex/live/nt8_feed.py`](../tradex/live/nt8_feed.py) | **fertig, 15 Tests** |
+| **NinjaScript-AddOn** [`TradeXBridge.cs`](TradeXBridge.cs) | **geschrieben, in NT8 ungeprüft** |
+
+**Was „ungeprüft" hier heißt:** Der C#-Teil läuft nur innerhalb von
+NinjaTrader; ohne installierte Plattform lässt er sich nicht einmal
+kompilieren. Er ist gegen diese Spezifikation geschrieben, nicht gegen einen
+laufenden NinjaTrader. Erwarte beim ersten Einbauen Kleinigkeiten — die
+Abnahmekriterien unten sind genau dafür da.
+
+Der **Python-Client** dagegen ist vollständig getestet: gegen einen echten
+TCP-Server auf Loopback, der diese Spezifikation nachbildet, inklusive
+Nachrichten über Paketgrenzen hinweg, kaputter Zeilen, Kontraktwechsel und
+Verbindungsabbruch.
+
+```bash
+python scripts/run_paper.py --symbol MNQ --feed nt8
+```
 
 ## Warum es diese Bridge überhaupt braucht
 
@@ -121,16 +138,28 @@ Bestätigung einschalten (`execution.live_trading_enabled`, geprüft in
 
 ## Umsetzungsschritte für Phase 5
 
-1. NinjaTrader 8 installieren (Free License genügt zum Entwickeln)
-2. NinjaScript-AddOn schreiben: `BarsRequest` je abonniertem Instrument,
-   Bar-Abschluss serialisieren, über den Socket senden
-3. `tradex/data/nt8_provider.py` ausimplementieren (Socket-Client,
-   Heartbeat-Überwachung, Wiederverbindung)
-4. Gegen **Market Replay** testen — deterministisch und kostenlos, deshalb
-   der richtige erste Schritt vor jedem Echtzeitbezug
-5. CME Level 1 abonnieren (~4 USD/Monat) und gegen den Live-Feed testen
+1. ~~NinjaScript-AddOn schreiben~~ → [`TradeXBridge.cs`](TradeXBridge.cs)
+2. ~~Socket-Client mit Heartbeat-Überwachung und Wiederverbindung~~ →
+   [`tradex/live/nt8_feed.py`](../tradex/live/nt8_feed.py)
+3. **NinjaTrader 8 installieren** (Free License genügt) und das AddOn einbauen:
+   NinjaScript Editor → Rechtsklick auf *AddOns* → *New AddOn* → Rumpf durch
+   `TradeXBridge.cs` ersetzen → F5
+4. Gegen **Market Replay** prüfen — deterministisch und kostenlos, deshalb der
+   richtige erste Schritt vor jedem Echtzeitbezug
+5. CME Level 1 abonnieren (~4 USD/Monat) und gegen den Live-Feed prüfen
 6. Reconciliation: Position und Kontostand regelmäßig gegen NinjaTrader
-   abgleichen (Spec §24)
+   abgleichen (Spec §24) — steht noch aus, betrifft aber erst Phase 8
+
+### Zwei Fallen, die im AddOn schon berücksichtigt sind
+
+**NinjaTrader stempelt eine Minutenbar auf ihr ENDE**, TradeX auf ihren Beginn.
+Ohne die Verschiebung in `SendBar` läge jede Bar um ihre eigene Dauer in der
+Zukunft, und jeder Vergleich mit dem historischen Bestand wäre um eine Bar
+verschoben — ein Fehler, der nirgends knallt.
+
+**`BarsRequest` meldet auch die laufende Bar.** Das AddOn sendet deshalb erst,
+wenn die *nächste* Bar begonnen hat (`bars.Count - 2`). Würde die laufende Bar
+hinausgehen, sähe die Engine live einen Zustand, den sie im Backtest nie sieht.
 
 ## Abnahmekriterien
 

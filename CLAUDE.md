@@ -87,7 +87,7 @@ UI beim ersten Start, öffnet das Fenster; Argumente werden durchgereicht).
 reine LF-Dateien nur teilweise verarbeitet und `goto` dabei still bricht.
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/ -q      # Tests (aktuell 422)
+.\.venv\Scripts\python.exe -m pytest tests/ -q      # Tests (aktuell 437)
 .\.venv\Scripts\python.exe -m ruff check tradex tests scripts
 .\.venv\Scripts\python.exe -m tradex.shell          # Desktop-Fenster
 .\.venv\Scripts\python.exe -m tradex.shell --server # nur Engine, Port 8765
@@ -289,7 +289,7 @@ außen normal aus.
 | Feed | Stand | Daten |
 |---|---|---|
 | `replay` | fertig | lokaler Bestand, beschleunigt oder in Echtzeit |
-| `nt8` | offen | NinjaTrader + AddOn aus `bridge_nt8/` |
+| `nt8` | Python-Client fertig (15 Tests), AddOn geschrieben aber in NT8 ungeprüft | echte CME-Daten |
 
 Die Wiedergabe ist **kein Ersatz für echte Daten** — sie prüft die Mechanik des
 Betriebs (Ausfallerkennung, Not-Aus, Persistenz) deterministisch und kostenlos.
@@ -575,13 +575,14 @@ tradex/backtest/    execution.py    wie ein Signal gefüllt und beendet worden w
                     store.py        Laufarchiv
 tradex/live/        feed.py         was ein Live-Feed liefern darf: nur GESCHLOSSENE Bars
                     replay_feed.py  gespeicherte Bars als Feed — deterministisch, gratis
+                    nt8_feed.py     Socket-Client zur NinjaTrader-Bridge (echte Daten)
                     session.py      Zustandsmaschine: Bars rein, Papertrades raus
                     runner.py       die Schleife: Zeit, Stille, Abbruch
                     store.py        Sitzung und Trades SOFORT haltbar machen
 tradex/api/         FastAPI + DTOs = einziger UI-Vertrag
 tradex/service.py   Anwendungsschicht (Laden, Replay-Cursor, Protokoll)
 ui/                 React + lightweight-charts v5, deutsch
-bridge_nt8/         Protokoll-Spezifikation für Phase 5 (noch nicht gebaut)
+bridge_nt8/         Protokoll + NinjaScript-AddOn (C#) — in NT8 noch ungeprüft
 ```
 
 Das Schema der Backtest-Tabellen steht in `tradex/persistence/db.py`

@@ -39,6 +39,7 @@ from tradex.backtest.execution import SimulatedTrade
 from tradex.config import get_config, get_instrument, resolved_config_path
 from tradex.data.store import BarStore
 from tradex.domain.bars import from_ns, to_ns
+from tradex.live.nt8_feed import DEFAULT_HOST, DEFAULT_PORT, NinjaTraderFeed
 from tradex.live.replay_feed import ReplayFeed
 from tradex.live.runner import SessionRunner
 from tradex.live.session import SessionConfig, TradingSession
@@ -78,15 +79,21 @@ class _Heartbeat:
 
     def __call__(self, session: TradingSession) -> None:
         status = session.status()
-        anteil = 100.0 * status.bars_seen / self.total if self.total else 0.0
-        if anteil - self.last < 0.1 and status.bars_seen:
-            return
-        self.last = anteil
+        if self.total:
+            anteil = 100.0 * status.bars_seen / self.total
+            if anteil - self.last < 0.1 and status.bars_seen:
+                return
+            self.last = anteil
+            fortschritt = f"{status.bars_seen:>8,}/{self.total:,} Bars ({anteil:5.1f} %)"
+        else:
+            # Echtzeit: es gibt kein "wie weit" - nur "seit wann still".
+            still = (session.clock() - status.last_message_ts) / 1e9
+            fortschritt = f"{status.bars_seen:>8,} Bars, still seit {still:4.0f} s"
+
         zustand = status.halted_reason or ("laeuft" if status.connected else "wartet")
         sys.stderr.write(
-            f"\r  {status.bars_seen:>8,}/{self.total:,} Bars ({anteil:5.1f} %)  "
-            f"{zustand:<18} Trades {status.trades_closed:>3}  offen {status.open_positions}  "
-            f"Konto {status.equity:>11,.2f} USD "
+            f"\r  {fortschritt}  {zustand:<18} Trades {status.trades_closed:>3}  "
+            f"offen {status.open_positions}  Konto {status.equity:>11,.2f} USD "
         )
         sys.stderr.flush()
 
@@ -103,6 +110,8 @@ def main() -> int:
     )
     parser.add_argument("--from", dest="start", help="Startdatum YYYY-MM-DD (nur Wiedergabe)")
     parser.add_argument("--to", dest="end", help="Enddatum YYYY-MM-DD (nur Wiedergabe)")
+    parser.add_argument("--host", default=DEFAULT_HOST, help="NinjaTrader-Bridge (nur nt8)")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="Port der Bridge (nur nt8)")
     parser.add_argument("--max-bars", type=int, default=0, help="nach so vielen Bars aufhoeren")
     parser.add_argument("--notes", default="", help="Notiz zur gespeicherten Sitzung")
     parser.add_argument("--no-save", action="store_true", help="nicht in der Datenbank festhalten")
@@ -120,23 +129,29 @@ def main() -> int:
     symbols = [s.strip().upper() for s in args.symbol.split(",") if s.strip()]
     instruments = {name: get_instrument(name) for name in symbols}
 
-    if args.feed != "replay":
-        print(f"Feed '{args.feed}' ist noch nicht angeschlossen.")
-        print("Vorhanden: replay. Fuer nt8 fehlt das NinjaScript-AddOn (bridge_nt8/).")
-        return 1
-
-    store = BarStore(config.path(config.data.parquet_dir))
-    series_by_symbol = {}
-    for name in symbols:
-        series = store.read(
-            name, config.data.base_timeframe, _parse_date(args.start), _parse_date(args.end)
+    if args.feed == "nt8":
+        feed: ReplayFeed | NinjaTraderFeed = NinjaTraderFeed(
+            tuple(symbols), config.data.base_timeframe, host=args.host, port=args.port
         )
-        if len(series) == 0:
-            print(f"Keine {config.data.base_timeframe.value}-Daten fuer {name}.")
-            return 1
-        series_by_symbol[name] = series
-
-    feed = ReplayFeed(series_by_symbol, speed=args.speed, base_seconds=config.data.base_timeframe.seconds)
+        total_bars = 0
+    elif args.feed == "replay":
+        store = BarStore(config.path(config.data.parquet_dir))
+        series_by_symbol = {}
+        for name in symbols:
+            series = store.read(
+                name, config.data.base_timeframe, _parse_date(args.start), _parse_date(args.end)
+            )
+            if len(series) == 0:
+                print(f"Keine {config.data.base_timeframe.value}-Daten fuer {name}.")
+                return 1
+            series_by_symbol[name] = series
+        feed = ReplayFeed(
+            series_by_symbol, speed=args.speed, base_seconds=config.data.base_timeframe.seconds
+        )
+        total_bars = feed.total_bars
+    else:
+        print(f"Unbekannter Feed '{args.feed}'. Vorhanden: replay, nt8.")
+        return 1
 
     sessions: SessionStore | None = None
     if not args.no_save:
@@ -178,7 +193,10 @@ def main() -> int:
     print("=" * 78)
     print(f"  PAPERTRADING  {'+'.join(symbols)}  -  Feed: {feed.name}")
     print("=" * 78)
-    print(f"  {feed.total_bars:,} Bars, Beschleunigung {args.speed:g}x")
+    if total_bars:
+        print(f"  {total_bars:,} Bars, Beschleunigung {args.speed:g}x")
+    else:
+        print(f"  Echtzeit ueber {args.host}:{args.port} - laeuft, bis Strg-C kommt")
     print(f"  Konto {config.risk.account_size:,.0f} USD, Risiko {config.risk.risk_per_trade_pct} % je Trade")
     print(f"  Strategien: {', '.join(s.name for s in next(iter(session.books.values())).book.strategy.strategies)}")
     if sessions is not None:
@@ -186,9 +204,7 @@ def main() -> int:
     print("  Strg-C beendet geordnet.")
     print()
 
-    runner = SessionRunner(
-        session, feed, on_trade=_print_trade, on_tick=_Heartbeat(feed.total_bars)
-    )
+    runner = SessionRunner(session, feed, on_trade=_print_trade, on_tick=_Heartbeat(total_bars))
     runner.install_signal_handler()
     result = runner.run(max_bars=args.max_bars)
     sys.stderr.write("\r" + " " * 110 + "\r")
