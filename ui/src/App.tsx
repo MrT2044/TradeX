@@ -33,16 +33,30 @@ const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h'];
 const ENTRY_TIMEFRAME = '1m';
 const PLAY_INTERVAL_MS = 400;
 
-/** Bars, die beim Symbolwechsel sofort durchlaufen, damit das Chart nicht leer
- *  bleibt.
+/** Wie viele Basis-Bars beim Symbolwechsel geladen UND analysiert werden.
  *
- *  Eine feste Zahl, KEIN Anteil des Datenbestands. Vorher waren es 60% der
- *  geladenen Bars - bei vollem Bestand also 120.000 Stueck, gemessene 90
- *  Sekunden, in denen die Oberflaeche leer dasteht und kaputt aussieht. Ein
- *  Anteil laesst die Wartezeit ausgerechnet dann wachsen, wenn man mehr
- *  Historie hat. 10.000 Minutenbars decken den 5m-Chart (1500 Bars = 7.500
- *  Minuten) vollstaendig ab und kosten rund fuenf Sekunden. */
-const WARMUP_BARS = 10_000;
+ *  Der Chart soll ein Chart sein: hinschauen, schieben, zoomen. Dazu muessen
+ *  Bars und Muster denselben Bereich abdecken - ein Chart, der weiter reicht
+ *  als die Analyse, zeigt Kerzen ohne die Kursluecken und Sweeps, die dort
+ *  tatsaechlich liegen, und das ist schlimmer als ein kuerzerer Chart.
+ *
+ *  Deshalb eine feste, ueberschaubare Menge statt des ganzen Bestands: 30.000
+ *  Minutenbars sind rund drei Wochen und kosten gemessene ~15 Sekunden. Die
+ *  vollen 200.000 waeren ~105 Sekunden gewesen - bei jedem Symbolwechsel. Fuer
+ *  laengere Zeitraeume ist der Backtest zustaendig, nicht der Chart. */
+const HISTORY_BARS = 30_000;
+
+/** Portionsgroesse des Warmlaufs. Klein genug, dass die Anzeige sichtbar
+ *  vorankommt, gross genug, dass der Verwaltungsaufwand nicht ins Gewicht
+ *  faellt. */
+const WARMUP_CHUNK = 5_000;
+
+/** Wie oft der Chart im Echtzeitbetrieb nachgefuehrt wird.
+ *
+ *  Die Basis ist die Minutenbar - haeufiger nachzufragen brachte nichts ausser
+ *  Last. Fuenf Sekunden sind fein genug, dass die laufende Bar sichtbar
+ *  waechst, und grob genug, dass die Abfrage nicht ins Gewicht faellt. */
+const LIVE_REFRESH_MS = 5_000;
 
 const DEFAULT_TOGGLES: ChartToggles = {
   fvg: true,
@@ -75,6 +89,8 @@ export default function App() {
 
   const [toggles, setToggles] = useState<ChartToggles>(DEFAULT_TOGGLES);
   const [busy, setBusy] = useState(false);
+  /** Fortschritt des Warmlaufs - null, wenn gerade keiner laeuft. */
+  const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [session, setSession] = useState<SessionStatus | null>(null);
@@ -153,27 +169,45 @@ export default function App() {
         // Ergebnis des vorigen Instruments verwerfen - sonst stuende beim
         // Wechsel eine fremde Statistik unter dem neuen Symbol.
         setBacktest(null);
-        // feedAll=false: die Daten liegen bereit, die Analyse startet bei 0.
-        // So kann man von Anfang an mitverfolgen, wann welcher Detektor anspringt.
-        const loaded = await api.load(symbol, { feedAll: false });
+        // feedAll=false und danach portionsweise selbst durchlaufen: nur so
+        // laesst sich der Fortschritt anzeigen. `feedAll: true` rechnet im
+        // Server durch und meldet sich erst, wenn es fertig ist - fuenfzehn
+        // Sekunden ohne ein Lebenszeichen sehen aus wie ein Absturz.
+        const loaded = await api.load(symbol, { maxBars: HISTORY_BARS, feedAll: false });
         if (cancelled) return;
         setTotal(loaded.base_bars);
         setCursor(loaded.cursor);
         setIntegrity(loaded.integrity);
 
-        // Einen Teil sofort durchlaufen lassen, damit nicht ein leeres Chart
-        // dasteht - aber nicht alles, damit noch etwas zum Zusehen bleibt.
-        const warmup = Math.min(loaded.base_bars, WARMUP_BARS);
-        if (warmup > 0) {
-          const stepped = await api.step(symbol, warmup);
+        // Den GANZEN geladenen Bereich analysieren, damit Chart und Muster
+        // denselben Zeitraum abdecken.
+        let done = loaded.cursor;
+        while (done < loaded.base_bars) {
+          const stepped = await api.step(symbol, Math.min(WARMUP_CHUNK, loaded.base_bars - done));
           if (cancelled) return;
-          setCursor(stepped.cursor);
+          done = stepped.cursor;
+          setCursor(done);
+          setProgress({ done, total: loaded.base_bars });
+          if (stepped.exhausted) break;
         }
+        setProgress(null);
         await refreshView(symbol, timeframe);
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err));
+        if (cancelled) return;
+        // Fuer die echten Futures (MNQ, NQ) liegt keine Historie auf der
+        // Platte - deren Bars kommen live von NinjaTrader. Laeuft dafuer
+        // gerade eine Sitzung, ist das kein Fehler, sondern der Normalfall:
+        // der Chart faengt leer an und fuellt sich Bar fuer Bar.
+        if (sessionRef.current?.active && sessionRef.current.symbols.includes(symbol)) {
+          await refreshView(symbol, timeframe).catch(() => undefined);
+        } else {
+          setError(err instanceof Error ? err.message : String(err));
+        }
       } finally {
-        if (!cancelled) setBusy(false);
+        if (!cancelled) {
+          setBusy(false);
+          setProgress(null);
+        }
       }
     })();
 
@@ -278,6 +312,11 @@ export default function App() {
   const playingRef = useRef(playing);
   playingRef.current = playing;
 
+  // Der Ladevorgang muss den Betriebszustand lesen koennen, ohne ihn in seine
+  // Abhaengigkeiten zu nehmen - sonst startet er bei jeder Zustandsmeldung neu.
+  const sessionRef = useRef(session);
+  sessionRef.current = session;
+
   useEffect(() => {
     if (!playing) return;
     let cancelled = false;
@@ -290,6 +329,42 @@ export default function App() {
       window.clearInterval(timer);
     };
   }, [playing, stepSize, advance]);
+
+  // --- Echtzeit: der Chart folgt der laufenden Sitzung ---------------------
+  // Laeuft eine Sitzung fuer dieses Symbol, liefert `/api/bars` deren Bars -
+  // die Auswahl trifft der Server (`TradexService.chart_context`). Hier muss
+  // nur regelmaessig nachgefragt werden. Der Zustandsstrom (SSE) meldet
+  // Zaehler, keine Kursreihen; die waeren fuer einen Dauerstrom zu gross und
+  // wuerden bei jeder Bar das ganze Chart neu schicken.
+  const liveActive = Boolean(
+    session?.active && session.running && symbol && session.symbols.includes(symbol),
+  );
+
+  useEffect(() => {
+    if (!liveActive || !symbol) return;
+    let cancelled = false;
+    const holen = async () => {
+      try {
+        const [barsData, overlayData] = await Promise.all([
+          api.bars(symbol, timeframe),
+          api.overlays(symbol, timeframe),
+        ]);
+        if (cancelled) return;
+        setBars(barsData);
+        setOverlays(overlayData);
+      } catch {
+        /* Ein Aussetzer ist kein Grund, das Nachfuehren aufzugeben - die
+           naechste Runde kann wieder klappen. Der Verbindungszustand steht
+           ohnehin schon in der Betriebsanzeige. */
+      }
+    };
+    void holen();
+    const timer = window.setInterval(() => void holen(), LIVE_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [liveActive, symbol, timeframe]);
 
   const handleReset = useCallback(async () => {
     if (!symbol) return;
@@ -429,6 +504,20 @@ export default function App() {
               toggles={toggles}
               priceDecimals={instrument?.price_decimals ?? 2}
             />
+            {liveActive && <div className="chart-live">{de.chart.live}</div>}
+            {progress && (
+              <div className="chart-loading">
+                <div className="chart-loading__text">
+                  {de.chart.analysing(progress.done, progress.total)}
+                </div>
+                <div className="chart-loading__bar">
+                  <div
+                    className="chart-loading__fill"
+                    style={{ width: `${(progress.done / progress.total) * 100}%` }}
+                  />
+                </div>
+              </div>
+            )}
           </div>
 
           <ReplayControls

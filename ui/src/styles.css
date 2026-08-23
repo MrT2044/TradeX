@@ -272,6 +272,56 @@ pre {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   overflow: hidden;
+  position: relative; /* Bezug fuer Ladeanzeige und Echtzeitmarke */
+}
+
+/* Ladeanzeige: liegt UEBER dem Chart, statt ihn zu ersetzen. Ein Chart, der
+   beim Nachladen verschwindet, laesst den Bildschirm springen - und man sieht
+   nicht mehr, was vorher da war. */
+.chart-loading {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  min-width: 260px;
+  padding: 14px 18px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+.chart-loading__text {
+  font-size: 12px;
+  font-family: var(--font-mono);
+  margin-bottom: 8px;
+}
+.chart-loading__bar {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+.chart-loading__fill {
+  height: 100%;
+  background: var(--accent, #4f9cf9);
+  transition: width 0.2s linear;
+}
+
+/* Echtzeitmarke: der Unterschied zwischen laufenden und gespeicherten Kursen
+   muss man sehen koennen, ohne ihn sich aus der Betriebsanzeige herzuleiten. */
+.chart-live {
+  position: absolute;
+  right: 12px;
+  top: 10px;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  color: var(--ok, #4caf7d);
+  border: 1px solid currentColor;
+  background: var(--bg-panel);
 }
 
 .chart-canvas {

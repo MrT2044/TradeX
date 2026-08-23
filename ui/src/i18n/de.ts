@@ -278,6 +278,9 @@ export const de = {
     showStructure: 'Struktur (BOS/MSS)',
     showSweeps: 'Sweeps',
     forming: 'laufende Bar',
+    live: 'ECHTZEIT',
+    analysing: (done: number, total: number) =>
+      `Analysiere ${done.toLocaleString('de-DE')} von ${total.toLocaleString('de-DE')} Bars ...`,
   },
   analysis: {
     title: 'Analyse',

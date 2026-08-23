@@ -294,11 +294,30 @@ class TradexService:
     def snapshot(self, symbol: str, max_items: int = 50) -> ContextSnapshot:
         return self.state(symbol).context.snapshot(max_items)
 
+    def chart_context(self, symbol: str) -> MarketContext:
+        """Woher der Chart seine Bars nimmt.
+
+        Laeuft eine Sitzung fuer dieses Symbol, gilt DEREN Analysezustand: das
+        ist der Betrieb, und wer zusieht, will sehen, was gerade passiert - und
+        nicht, wo die Wiedergabe stehengeblieben ist. Sonst der geladene
+        Wiedergabe-Zustand.
+
+        Die Auswahl steht bewusst hier und nicht in der API-Schicht: sonst
+        muesste jeder Endpunkt sie einzeln treffen, und der erste, der es
+        vergisst, zeigt im Betrieb alte Kurse an.
+        """
+        live = self.sessions.context(symbol)
+        return live if live is not None else self.state(symbol).context
+
+    def is_live(self, symbol: str) -> bool:
+        """Kommt der Chart gerade aus dem laufenden Betrieb?"""
+        return self.sessions.context(symbol) is not None
+
     def bars(self, symbol: str, timeframe: Timeframe, limit: int | None = None) -> BarSeries:
-        return self.state(symbol).context.series(timeframe)
+        return self.chart_context(symbol).series(timeframe)
 
     def forming(self, symbol: str, timeframe: Timeframe) -> Bar | None:
-        return self.state(symbol).context.forming(timeframe)
+        return self.chart_context(symbol).forming(timeframe)
 
     # ------------------------------------------------------------------ Strategie
     def strategy(self, symbol: str) -> StrategyPortfolio:

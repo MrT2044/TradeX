@@ -143,6 +143,34 @@ def test_start_meldet_den_laufenden_betrieb(client: TestClient):
     assert laeuft["start_equity"] > 0
 
 
+def test_der_chart_zeigt_die_bars_der_laufenden_sitzung(client: TestClient):
+    """Ohne das hier gibt es keinen Echtzeit-Chart.
+
+    Die Sitzung fuehrt ihre eigenen `SymbolBook`s; der Chart las aus den
+    Wiedergabe-Zustaenden des Service. Beides war nie verbunden - eine
+    laufende Sitzung konnte beliebig viele Bars verarbeiten, ohne dass im
+    Chart je eine erschien. Geprueft wird deshalb die Verbindung selbst: die
+    Bars der Sitzung MUESSEN in `/api/bars` ankommen, ohne dass jemand
+    `/api/load` aufgerufen hat.
+    """
+    leer = client.get(f"/api/bars?symbol={SYMBOL}&timeframe=1m&limit=50")
+    assert leer.status_code == 404, "ohne Sitzung und ohne /load gibt es keine Bars"
+
+    start(client, speed=LAUFEND, max_bars=0)
+    wait_until(client, lambda b: b["bars_seen"] > 100)
+
+    body = client.get(f"/api/bars?symbol={SYMBOL}&timeframe=1m&limit=50").json()
+    assert len(body["bars"]) > 0, "die Sitzung laeuft, aber der Chart bleibt leer"
+
+    # Gegenprobe gegen leere Wahrheit: der Chart muss MITWACHSEN, nicht nur
+    # einmal etwas zeigen. Ein eingefrorener Stand saehe sonst gesund aus.
+    vorher = body["bars"][-1]["ts"]
+    gewachsen = wait_until(client, lambda b: b["bars_seen"] > 400)
+    assert gewachsen["bars_seen"] > 400
+    nachher = client.get(f"/api/bars?symbol={SYMBOL}&timeframe=1m&limit=50").json()
+    assert nachher["bars"][-1]["ts"] > vorher
+
+
 def test_eine_frisch_gestartete_sitzung_nimmt_erst_nach_verbindung_positionen_auf(
     client: TestClient,
 ):

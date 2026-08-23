@@ -35,6 +35,7 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from tradex.analysis.context import MarketContext
 from tradex.backtest.execution import SimulatedTrade
 from tradex.backtest.runner import BACKTEST_VERSION
 from tradex.broker.base import BrokerInterface
@@ -516,6 +517,28 @@ class SessionManager:
     @property
     def session(self) -> TradingSession | None:
         return self._session
+
+    def context(self, symbol: str) -> MarketContext | None:
+        """Der Analysezustand des laufenden Betriebs - oder None.
+
+        Damit sieht die Oberflaeche die Bars, die GERADE hereinkommen. Vorher
+        gab es dafuer keinen Weg: die Sitzung fuehrt ihre eigenen `SymbolBook`s,
+        und der Chart las aus den Wiedergabe-Zustaenden des Service. Ein
+        Echtzeit-Chart war damit nicht bloss abgeschaltet, es gab ihn nicht.
+
+        Bewusst ohne Sperre, aus demselben Grund wie `state()`: eine Sperre
+        wuerde die Anzeige an den Sitzungsfaden koppeln, und ausgerechnet beim
+        Zusehen bliebe sie stehen. Das ist hier auch ungefaehrlich - `BarSeries`
+        haelt vorbelegte numpy-Felder und zaehlt erst NACH dem Schreiben hoch,
+        und ein Feld, das nebenher waechst, wird ersetzt statt veraendert. Wer
+        dazwischen liest, bekommt eine um eine Bar aeltere Fassung, nie eine
+        halb geschriebene.
+        """
+        session = self._session
+        if session is None:
+            return None
+        state = session.books.get(symbol.upper())
+        return state.book.context if state is not None else None
 
     def trades(self, limit: int = 100) -> tuple[SimulatedTrade, ...]:
         session = self._session
