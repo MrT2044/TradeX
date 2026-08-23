@@ -16,11 +16,17 @@ using NinjaTrader.NinjaScript;
 // ===========================================================================
 //
 //  EINBAUEN
-//    1. NinjaTrader 8 -> New -> NinjaScript Editor
-//    2. Rechtsklick auf "AddOns" -> New AddOn -> Namen "TradeXBridge" vergeben
-//    3. Den erzeugten Rumpf durch diese Datei ersetzen
-//    4. F5 (Compile). Die Bridge startet mit NinjaTrader und lauscht auf
-//       127.0.0.1:36973
+//    1. Diese Datei nach
+//         %USERPROFILE%\Documents\NinjaTrader 8\bin\Custom\AddOns\
+//       kopieren. NinjaTrader liest AddOns von dort - Copy-Paste im Editor
+//       ist unnoetig.
+//    2. NinjaTrader NEU STARTEN. Eine Datei, die waehrend des Betriebs
+//       dazukommt, taucht im NinjaScript Explorer nicht auf: der Ordner wird
+//       beim Start eingelesen.
+//    3. New -> NinjaScript Editor -> AddOns -> TradeXBridge -> F5.
+//       Beim ersten Mal fragt NinjaTrader, ob das AddOn autorisiert werden
+//       soll ("detected new add on(s)") -> Yes.
+//    4. Die Bridge lauscht danach auf 127.0.0.1:39473.
 //    5. In TradeX:  python scripts/run_paper.py --symbol MNQ --feed nt8
 //
 //  Protokoll: siehe README.md in diesem Verzeichnis. Zeilenweises JSON,
@@ -51,9 +57,12 @@ using NinjaTrader.NinjaScript;
 
 namespace NinjaTrader.NinjaScript.AddOns
 {
-    public class TradeXBridge : NinjaScript.AddOnBase
+    public class TradeXBridge : AddOnBase
     {
-        private const int Port = 36973;
+        // NICHT 36973: das ist NinjaTraders eigener ATI-Port. Er ist belegt,
+        // sobald NinjaTrader laeuft - der Listener kaeme gar nicht hoch.
+        // Nachgemessen an einer laufenden Installation 8.1.8.2.
+        private const int Port = 39473;
         private const int HeartbeatSeconds = 5;
 
         private TcpListener listener;
@@ -145,11 +154,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                     TcpClient client = listener.AcceptTcpClient();
                     lock (clientLock) { clients.Add(client); }
 
+                    // Bewusst ohne Auskunft ueber den Datenfeed von NinjaTrader:
+                    // dieser Socket sagt nur, dass DIE BRIDGE steht. Ob Daten
+                    // fliessen, sieht TradeX daran, ob Bars ankommen - eine
+                    // zweite, moeglicherweise widerspruechliche Quelle dafuer
+                    // waere schlechter als keine.
                     Send(client, "{\"type\":\"status\",\"connected\":true,"
-                        + "\"data_feed\":\"" + (Connection.PrimaryConnection != null
-                            && Connection.PrimaryConnection.Status == ConnectionStatus.Connected
-                            ? "connected" : "disconnected")
-                        + "\",\"detail\":\"TradeXBridge\"}");
+                        + "\"data_feed\":\"unknown\",\"detail\":\"TradeXBridge\"}");
 
                     var reader = new Thread(() => ReadLoop(client))
                     {
@@ -210,7 +221,7 @@ namespace NinjaTrader.NinjaScript.AddOns
             // feste Form. Ein unvollstaendiger Eigenbau-Parser waere die
             // schlechtere Wahl als gar keiner.
             string type = ExtractString(line, "type");
-            if (type != "subscribe" && type != "unsubscribe") return;
+            if (type != "subscribe" && type != "unsubscribe" && type != "history") return;
 
             string symbol = ExtractString(line, "symbol");
             string timeframe = ExtractString(line, "timeframe");
@@ -218,7 +229,58 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (timeframe.Length == 0) timeframe = "1m";
 
             if (type == "subscribe") Subscribe(symbol, timeframe);
-            else Unsubscribe(symbol, timeframe);
+            else if (type == "unsubscribe") Unsubscribe(symbol, timeframe);
+            else History(symbol, timeframe, ExtractLong(line, "from"), ExtractLong(line, "to"));
+        }
+
+        // ------------------------------------------------------------ Historie
+        private void History(string symbol, string timeframe, long fromNs, long toNs)
+        {
+            // Warum es diesen Befehl gibt: der laufende Betrieb braucht ihn
+            // nicht - TradeX haelt seine Historie selbst. Aber ohne ihn laesst
+            // sich die Bar-Uebertragung nur bei GEOEFFNETER Boerse pruefen.
+            // Mit ihm ist sie jederzeit gegen echte Daten pruefbar, und genau
+            // das ist der Unterschied zwischen "sollte gehen" und "geht".
+            Instrument instrument = ResolveInstrument(symbol);
+            int minutes = MinutesOf(timeframe);
+            if (instrument == null || minutes <= 0)
+            {
+                Broadcast("{\"type\":\"history_end\",\"symbol\":\"" + Escape(symbol)
+                    + "\",\"timeframe\":\"" + Escape(timeframe) + "\",\"count\":0,"
+                    + "\"detail\":\"Instrument oder Zeitebene unbekannt\"}");
+                return;
+            }
+
+            var request = new BarsRequest(instrument, FromEpochNanos(fromNs), FromEpochNanos(toNs))
+            {
+                BarsPeriod = new BarsPeriod
+                {
+                    BarsPeriodType = BarsPeriodType.Minute,
+                    Value = minutes
+                },
+                TradingHours = instrument.MasterInstrument.TradingHours
+            };
+
+            request.Request((completed, error, message) =>
+            {
+                int sent = 0;
+                if (error == ErrorCode.NoError && completed.Bars != null)
+                {
+                    // ALLE Bars dieses Bereichs gelten als geschlossen: der
+                    // Bereich liegt in der Vergangenheit. Die Regel "nur
+                    // geschlossene Bars" ist damit nicht aufgeweicht.
+                    for (int index = 0; index < completed.Bars.Count; index++)
+                    {
+                        SendBar(symbol, timeframe, completed.Bars, index);
+                        sent++;
+                    }
+                }
+                Broadcast("{\"type\":\"history_end\",\"symbol\":\"" + Escape(symbol)
+                    + "\",\"timeframe\":\"" + Escape(timeframe)
+                    + "\",\"count\":" + sent.ToString(CultureInfo.InvariantCulture)
+                    + ",\"detail\":\"" + Escape(error == ErrorCode.NoError ? "" : message) + "\"}");
+                try { request.Dispose(); } catch { }
+            });
         }
 
         private void Subscribe(string symbol, string timeframe)
@@ -229,7 +291,7 @@ namespace NinjaTrader.NinjaScript.AddOns
                 if (requests.ContainsKey(key)) return;
             }
 
-            Instrument instrument = Instrument.GetInstrument(symbol);
+            Instrument instrument = ResolveInstrument(symbol);
             if (instrument == null)
             {
                 Broadcast("{\"type\":\"status\",\"connected\":false,\"data_feed\":\"unknown\","
@@ -255,8 +317,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 TradingHours = instrument.MasterInstrument.TradingHours
             };
 
-            request.Update += (sender, args) => OnBarsUpdate(key, symbol, timeframe, args);
-            request.Request((bars, error, message) =>
+            // `args.BarsSeries` ist NICHT vom Typ `Bars` - gearbeitet wird
+            // deshalb mit `request.Bars`, das die richtige Sicht liefert.
+            request.Update += (sender, args) => OnBarsUpdate(key, symbol, timeframe, request);
+            request.Request((completed, error, message) =>
             {
                 if (error != ErrorCode.NoError)
                 {
@@ -270,11 +334,56 @@ namespace NinjaTrader.NinjaScript.AddOns
                     // Beim Start NICHT die ganze Historie senden: TradeX holt
                     // Historie ueber seinen eigenen Datenbestand. Hier zaehlt
                     // nur, was ab jetzt schliesst.
-                    lastSentIndex[key] = bars.Bars.Count - 1;
+                    lastSentIndex[key] = completed.Bars == null ? -1 : completed.Bars.Count - 1;
                 }
                 NinjaTrader.Code.Output.Process(
                     "TradeXBridge abonniert " + key, PrintTo.OutputTab1);
             });
+        }
+
+        // ------------------------------------------------- Instrument finden
+        private Instrument ResolveInstrument(string symbol)
+        {
+            // Drei Stufen, und die dritte ist die entscheidende.
+            //
+            // TradeX kennt nur das Wurzelsymbol "MNQ" und will es ueber
+            // Kontraktwechsel hinweg durchgehend handeln. An einer laufenden
+            // Installation gemessen:
+            //
+            //   GetInstrument("MNQ")       -> null
+            //   GetInstrumentFuzzy("MNQ")  -> ein GENERISCHER Eintrag "MNQ",
+            //                                 den der Datenanbieter ablehnt:
+            //                                 "Symbol is inaccessible /
+            //                                  UnknownSymbol"
+            //
+            // Gebraucht wird der zum HEUTIGEN Datum laufende Kontrakt, also
+            // "MNQ SEP26". `GetInstrumentByDate` liefert genau den - und rollt
+            // damit automatisch mit, ohne dass TradeX etwas davon wissen muss.
+            // Welcher Kontrakt es geworden ist, steht in jeder Bar im Feld
+            // `contract`; daraus macht die Python-Seite `roll_boundary`.
+            // 1. Exakter Name ("MNQ SEP26") - dann ist nichts zu raten.
+            Instrument exact = Instrument.GetInstrument(symbol);
+            if (exact != null && exact.Expiry > DateTime.Now.Date) return exact;
+
+            // 2. Frontmonat selbst suchen: der naechste noch nicht abgelaufene
+            //    Kontrakt desselben Basiswerts. Bewusst ueber `Instrument.All`
+            //    statt ueber die Rollover-Logik von NinjaTrader - gemessen an
+            //    einer laufenden Installation liefert `GetInstrumentByDate`
+            //    fuer ein Wurzelsymbol denselben generischen Eintrag zurueck,
+            //    und der Datenanbieter lehnt den ab ("Symbol is inaccessible").
+            Instrument front = null;
+            foreach (Instrument candidate in Instrument.All)
+            {
+                if (candidate == null || candidate.MasterInstrument == null) continue;
+                if (!string.Equals(candidate.MasterInstrument.Name, symbol,
+                        StringComparison.OrdinalIgnoreCase)) continue;
+                if (candidate.Expiry <= DateTime.Now.Date) continue;
+                if (front == null || candidate.Expiry < front.Expiry) front = candidate;
+            }
+            if (front != null) return front;
+
+            // 3. Alles andere (Aktien, Devisen): kein Verfall, kein Frontmonat.
+            return exact ?? Instrument.GetInstrumentFuzzy(symbol);
         }
 
         private void Unsubscribe(string symbol, string timeframe)
@@ -291,9 +400,9 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         // ---------------------------------------------------------------- Bars
-        private void OnBarsUpdate(string key, string symbol, string timeframe, BarsUpdateEventArgs args)
+        private void OnBarsUpdate(string key, string symbol, string timeframe, BarsRequest request)
         {
-            Bars bars = args.BarsSeries;
+            Bars bars = request.Bars;
             if (bars == null || bars.Count < 2) return;
 
             int lastClosed = bars.Count - 2;   // die letzte Bar laeuft noch
@@ -375,6 +484,29 @@ namespace NinjaTrader.NinjaScript.AddOns
         }
 
         // ------------------------------------------------------------ Werkzeug
+        private static DateTime FromEpochNanos(long nanos)
+        {
+            if (nanos <= 0) return DateTime.Now.AddDays(-5);
+            var epoch = new DateTime(1970, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+            return epoch.AddMilliseconds(nanos / 1000000L).ToLocalTime();
+        }
+
+        private static long ExtractLong(string json, string field)
+        {
+            string needle = "\"" + field + "\"";
+            int at = json.IndexOf(needle, StringComparison.Ordinal);
+            if (at < 0) return 0;
+            int colon = json.IndexOf(':', at + needle.Length);
+            if (colon < 0) return 0;
+            int start = colon + 1;
+            while (start < json.Length && (json[start] == ' ' || json[start] == '"')) start++;
+            int end = start;
+            while (end < json.Length && (char.IsDigit(json[end]) || json[end] == '-')) end++;
+            long value;
+            return long.TryParse(json.Substring(start, end - start),
+                NumberStyles.Integer, CultureInfo.InvariantCulture, out value) ? value : 0;
+        }
+
         private static long ToEpochNanos(DateTime value)
         {
             DateTime utc = value.Kind == DateTimeKind.Utc ? value : value.ToUniversalTime();

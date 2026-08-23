@@ -49,6 +49,10 @@ instruments:
     name: "Micro E-mini Nasdaq-100"
     databento_dataset: GLBX.MDP3
     databento_continuous: "MNQ.c.0"     # volumenbasierter Roll, Front Month
+    # Kontraktname in NinjaTrader. MUSS beim Roll nachgezogen werden - ein
+    # blankes "MNQ" lehnt der Datenanbieter mit "Symbol is inaccessible" ab
+    # (an NinjaTrader 8.1.8.2 gemessen). Nur fuer den nt8-Feed relevant.
+    nt8_symbol: "MNQ SEP26"
     tick_size: 0.25                     # Indexpunkte
     tick_value: 0.50                    # USD pro Tick
     point_value: 2.00                   # USD pro Indexpunkt

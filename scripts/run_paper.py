@@ -136,8 +136,18 @@ def main() -> int:
     instruments = {name: get_instrument(name) for name in symbols}
 
     if args.feed == "nt8":
+        # NinjaTrader will den Kontraktnamen ("MNQ SEP26"), TradeX rechnet mit
+        # dem Wurzelsymbol ("MNQ"). Die Zuordnung steht in instruments.yaml -
+        # nicht hier, und schon gar nicht geraten.
+        kontrakte = {s: instruments[s].nt8_symbol for s in symbols if instruments[s].nt8_symbol}
+        for symbol, nt8 in kontrakte.items():
+            print(f"  {symbol} -> NinjaTrader-Kontrakt '{nt8}'")
         feed: ReplayFeed | NinjaTraderFeed = NinjaTraderFeed(
-            tuple(symbols), config.data.base_timeframe, host=args.host, port=args.port
+            tuple(symbols),
+            config.data.base_timeframe,
+            host=args.host,
+            port=args.port,
+            contracts=kontrakte,
         )
         total_bars = 0
     elif args.feed == "replay":

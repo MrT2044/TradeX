@@ -573,6 +573,7 @@ def _build_instrument(symbol: str, spec: dict[str, Any], defaults: dict[str, Any
         databento_dataset=spec["databento_dataset"],
         databento_continuous=spec["databento_continuous"],
         dukascopy_symbol=spec.get("dukascopy_symbol", ""),
+        nt8_symbol=spec.get("nt8_symbol", ""),
         contract_months=tuple(defaults["contract_months"]),
         trading_hours=TradingHours(
             week_open=WeekBoundary(

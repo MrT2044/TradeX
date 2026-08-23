@@ -51,7 +51,10 @@ from tradex.logging_setup import get_logger
 log = get_logger(__name__)
 
 DEFAULT_HOST = "127.0.0.1"
-DEFAULT_PORT = 36973
+DEFAULT_PORT = 39473
+"""NICHT 36973: das ist NinjaTraders eigener ATI-Port (an einer laufenden
+Installation 8.1.8.2 nachgemessen). Die Bridge kaeme dort nie hoch, und ein
+Client wuerde sich stattdessen mit der Order-Schnittstelle unterhalten."""
 
 #: Wartezeiten zwischen Verbindungsversuchen, in Sekunden. Waechst, damit aus
 #: einer Stoerung keine Dauerlast wird; deckelt, damit ein Wiederanlauf nicht
@@ -73,11 +76,19 @@ class NinjaTraderFeed:
         timeframe: Timeframe = Timeframe.M1,
         host: str = DEFAULT_HOST,
         port: int = DEFAULT_PORT,
+        contracts: dict[str, str] | None = None,
     ) -> None:
         if not symbols:
             raise ValueError("Ein Feed ohne Symbole abonniert nichts")
         self.symbols = tuple(s.upper() for s in symbols)
         self.timeframe = timeframe
+        # NinjaTrader kennt Kontrakte ("MNQ SEP26"), TradeX rechnet mit dem
+        # Wurzelsymbol ("MNQ"). Die Uebersetzung gehoert hierher: der Feed ist
+        # der Adapter. Wuerde die Sitzung Bars unter dem Kontraktnamen sehen,
+        # faende sie kein Buch dafuer - und der Betrieb liefe leer, ohne dass
+        # irgendetwas nach einem Fehler aussaehe.
+        self.contracts = {k.upper(): v for k, v in (contracts or {}).items()}
+        self._back = {v.upper(): k.upper() for k, v in self.contracts.items()}
         self.host = host
         self.port = port
 
@@ -138,7 +149,7 @@ class NinjaTraderFeed:
         for symbol in self.symbols:
             payload = {
                 "type": "subscribe",
-                "symbol": symbol,
+                "symbol": self.contracts.get(symbol, symbol),
                 "timeframe": self.timeframe.value,
             }
             sock.sendall((json.dumps(payload) + "\n").encode("utf-8"))
@@ -188,7 +199,8 @@ class NinjaTraderFeed:
 
     def _handle_bar(self, message: dict[str, object]) -> None:
         try:
-            symbol = str(message["symbol"]).upper()
+            gemeldet = str(message["symbol"]).upper()
+            symbol = self._back.get(gemeldet, gemeldet)
             timeframe = str(message.get("timeframe", self.timeframe.value))
             bar = Bar(
                 ts=int(message["ts"]),  # type: ignore[arg-type]

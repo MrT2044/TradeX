@@ -85,6 +85,20 @@ class Instrument:
     trading_hours: TradingHours
     sessions: tuple[SessionWindow, ...]
     rth: SessionWindow
+    nt8_symbol: str = ""
+    """Kontraktname in NinjaTrader, etwa "MNQ SEP26". Leer = Wurzelsymbol.
+
+    Warum das hier steht und nicht automatisch ermittelt wird: an einer
+    laufenden Installation 8.1.8.2 gemessen liefert weder
+    `Instrument.GetInstrument("MNQ")` noch `GetInstrumentFuzzy` noch
+    `GetInstrumentByDate` den Frontmonat - der Datenanbieter lehnt das
+    Ergebnis mit "Symbol is inaccessible" ab. Ein hinterlegter Name ist die
+    ehrlichere Loesung als eine Automatik, die still den falschen Kontrakt
+    zieht.
+
+    Der Preis dafuer: **beim Kontraktwechsel muss der Wert nachgezogen
+    werden.** Nur der nt8-Feed benutzt ihn; Backtest und Wiedergabe merken
+    davon nichts."""
     _tzinfo: ZoneInfo = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:

@@ -19,7 +19,7 @@ Arbeitshinweise für dieses Repository. Was das Projekt *ist*, steht im
 |---|---|
 | fertig | Registry, Multi-Instrument, Musterstatistik, News-Filter (Termine) |
 | offen | News-Filter (Schlagzeilen) — braucht erst eine Messung, siehe unten |
-| **Phase 5 läuft** | Papertrading-Betrieb steht; Echtzeit-Feed offen |
+| **Phase 5 läuft** | Papertrading steht, NinjaTrader-Bridge installiert und überträgt echte Bars |
 
 Phase 4b stand **nicht im ursprünglichen Plan**. Phase 4 hat sie erzwungen: sie
 hat erstmals *gemessen*, dass die Pflichtkette nur ~10 Trades im Jahr erzeugt.
@@ -87,7 +87,7 @@ UI beim ersten Start, öffnet das Fenster; Argumente werden durchgereicht).
 reine LF-Dateien nur teilweise verarbeitet und `goto` dabei still bricht.
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/ -q      # Tests (aktuell 437)
+.\.venv\Scripts\python.exe -m pytest tests/ -q      # Tests (aktuell 438)
 .\.venv\Scripts\python.exe -m ruff check tradex tests scripts
 .\.venv\Scripts\python.exe -m tradex.shell          # Desktop-Fenster
 .\.venv\Scripts\python.exe -m tradex.shell --server # nur Engine, Port 8765
@@ -289,12 +289,35 @@ außen normal aus.
 | Feed | Stand | Daten |
 |---|---|---|
 | `replay` | fertig | lokaler Bestand, beschleunigt oder in Echtzeit |
-| `nt8` | Python-Client fertig (15 Tests), AddOn geschrieben aber in NT8 ungeprüft | echte CME-Daten |
+| `nt8` | **läuft** — AddOn in NT 8.1.8.2 installiert, 1380 echte Bars übertragen | echte CME-Daten |
 
 Die Wiedergabe ist **kein Ersatz für echte Daten** — sie prüft die Mechanik des
 Betriebs (Ausfallerkennung, Not-Aus, Persistenz) deterministisch und kostenlos.
 Genau das sieht `bridge_nt8/README.md` als ersten Schritt vor. Jede gespeicherte
 Sitzung trägt deshalb ihren Feed-Namen.
+
+### NinjaTrader: fünf Dinge, die beim Einrichten zugeschlagen haben
+
+Installation 8.1.8.2, Programm unter `D:\bin\NinjaTrader.exe`, Benutzerdaten
+unter `Documents\NinjaTrader 8`. Details in `bridge_nt8/README.md`.
+
+1. **Port 36973 ist NinjaTraders eigener ATI-Port.** Die Spezifikation hatte
+   ihn versehentlich belegt; die Bridge wäre dort nie hochgekommen. Sie liegt
+   jetzt auf **39473**.
+2. **Ein AddOn kann gegen die echten Assemblies übersetzt werden, ohne
+   NinjaTrader zu öffnen** — `csc.exe` mit `/reference:D:\bin\NinjaTrader.Core.dll`
+   und `NinjaTrader.Gui.dll`. Das hat drei API-Fehler gefunden, bevor sie
+   jemanden Zeit gekostet haben. **Immer zuerst so prüfen**, dann erst F5.
+3. **NinjaTrader kompiliert neue Dateien nicht beim Start**, und der
+   NinjaScript Explorer liest den Ordner nur beim Start. Eine Datei, die
+   währenddessen dazukommt, ist unsichtbar → neu starten, dann F5.
+4. **Das Wurzelsymbol lässt sich nicht automatisch auflösen.** `MNQ` → der
+   Datenanbieter antwortet *"Symbol is inaccessible"*. Der Kontraktname steht
+   deshalb als `nt8_symbol` in `config/instruments.yaml` und **muss beim Roll
+   nachgezogen werden**.
+5. **Bei geschlossener Börse kommt keine Bar** — logisch, aber es sieht
+   genauso aus wie ein Defekt. Deshalb gibt es den `history`-Befehl: er prüft
+   die Bar-Übertragung gegen echte Daten zu jeder Tages- und Nachtzeit.
 
 ---
 
@@ -582,7 +605,7 @@ tradex/live/        feed.py         was ein Live-Feed liefern darf: nur GESCHLOS
 tradex/api/         FastAPI + DTOs = einziger UI-Vertrag
 tradex/service.py   Anwendungsschicht (Laden, Replay-Cursor, Protokoll)
 ui/                 React + lightweight-charts v5, deutsch
-bridge_nt8/         Protokoll + NinjaScript-AddOn (C#) — in NT8 noch ungeprüft
+bridge_nt8/         Protokoll + NinjaScript-AddOn (C#) — in NT 8.1.8.2 im Einsatz
 ```
 
 Das Schema der Backtest-Tabellen steht in `tradex/persistence/db.py`

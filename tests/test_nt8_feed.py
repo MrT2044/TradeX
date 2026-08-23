@@ -147,6 +147,33 @@ def test_ohne_symbole_gibt_es_nichts_zu_abonnieren():
         NinjaTraderFeed(())
 
 
+def test_kontraktname_wird_hin_und_zurueck_uebersetzt(bridge: BridgeServer):
+    """NinjaTrader kennt "MNQ SEP26", TradeX rechnet mit "MNQ".
+
+    Ohne die Rueckuebersetzung fande die Sitzung fuer die ankommenden Bars
+    kein Buch - der Betrieb liefe leer, ohne dass etwas nach einem Fehler
+    aussieht. Genau diese Sorte Fehler faellt im Betrieb nicht auf.
+    """
+    feed = NinjaTraderFeed(
+        ("MNQ",), Timeframe.M1, port=bridge.port, contracts={"MNQ": "MNQ SEP26"}
+    )
+    feed.start()
+    bridge.wait_for_client()
+    ende = time.monotonic() + TIMEOUT
+    while not bridge.received and time.monotonic() < ende:
+        time.sleep(0.05)
+
+    assert bridge.received[0]["symbol"] == "MNQ SEP26", "abonniert wird der Kontrakt"
+
+    payload = bar_message(1_740_000_000_000_000_000)
+    payload["symbol"] = "MNQ SEP26"
+    bridge.send(payload)
+    bars = [m for m in collect(feed, 2) if isinstance(m, BarMessage)]
+    feed.stop()
+
+    assert bars and bars[0].symbol == "MNQ", "zurueck kommt das Wurzelsymbol"
+
+
 # ---------------------------------------------------------------------- Bars
 def test_bar_wird_vollstaendig_uebernommen(bridge: BridgeServer):
     feed = NinjaTraderFeed(("MNQ",), port=bridge.port)

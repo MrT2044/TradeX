@@ -4,13 +4,33 @@
 |---|---|
 | Protokoll (dieses Dokument) | festgelegt |
 | **Python-Client** [`tradex/live/nt8_feed.py`](../tradex/live/nt8_feed.py) | **fertig, 15 Tests** |
-| **NinjaScript-AddOn** [`TradeXBridge.cs`](TradeXBridge.cs) | **geschrieben, in NT8 ungeprüft** |
+| **NinjaScript-AddOn** [`TradeXBridge.cs`](TradeXBridge.cs) | **läuft in NT 8.1.8.2**, 1380 echte Bars übertragen |
 
-**Was „ungeprüft" hier heißt:** Der C#-Teil läuft nur innerhalb von
-NinjaTrader; ohne installierte Plattform lässt er sich nicht einmal
-kompilieren. Er ist gegen diese Spezifikation geschrieben, nicht gegen einen
-laufenden NinjaTrader. Erwarte beim ersten Einbauen Kleinigkeiten — die
-Abnahmekriterien unten sind genau dafür da.
+**Am 23.08.2026 in einer laufenden Installation 8.1.8.2 nachgewiesen:**
+
+- AddOn kompiliert und startet mit NinjaTrader, lauscht auf 127.0.0.1:39473
+- Verbindung, Abonnement, Herzschlag alle 5 s — gemessen: 30 Schläge in 150 s
+- **1380 MNQ-Minutenbars** übertragen (Handelstag 21.08.2026). Streng
+  aufsteigend, keine Dubletten, exakt 60 s Abstand, `low ≤ open,close ≤ high`,
+  Kontraktname in jeder Bar
+- Erste Bar auf `22:00 UTC` = 17:00 CT, dem Globex-Start — die Umrechnung von
+  NinjaTraders Bar-**Ende** auf TradeX' Bar-**Beginn** stimmt
+- `scripts/run_paper.py --symbol MNQ --feed nt8` verbindet sich und läuft
+
+**Was das Übersetzen gegen die echten Assemblies gefunden hat** — Fehler, die
+eine Spezifikation allein nicht findet:
+
+- `NinjaScript.AddOnBase` gibt es nicht; die Basisklasse heißt `AddOnBase`
+- `Connection.PrimaryConnection` existiert nicht
+- `BarsUpdateEventArgs.BarsSeries` ist **nicht** vom Typ `Bars` — gearbeitet
+  wird mit `BarsRequest.Bars`
+- **Port 36973 war belegt**: das ist NinjaTraders eigener ATI-Port. Die Bridge
+  wäre dort nie hochgekommen
+
+**Was noch offen ist:** Bars bei geöffneter Börse. Der Nachweis oben lief über
+den `history`-Befehl, weil am Wochenende keine Bars schließen. Und: das
+Wurzelsymbol muss über `nt8_symbol` in `config/instruments.yaml` auf den
+Kontrakt abgebildet werden — siehe unten.
 
 Der **Python-Client** dagegen ist vollständig getestet: gegen einen echten
 TCP-Server auf Loopback, der diese Spezifikation nachbildet, inklusive
@@ -57,7 +77,11 @@ Limit. **Die Kernstrategie darf nie von Markttiefe abhängen** (Spec §4).
 Lokaler TCP-Socket, eine JSON-Nachricht pro Zeile (`\n`-getrennt), UTF-8.
 Das AddOn ist Server, Python ist Client.
 
-- Adresse: `127.0.0.1:36973` (in beiden Seiten konfigurierbar)
+- Adresse: `127.0.0.1:39473` (in beiden Seiten konfigurierbar)
+- **Nicht 36973** — das ist NinjaTraders eigener ATI-Port. An einer laufenden
+  Installation 8.1.8.2 nachgemessen: er ist belegt, sobald NinjaTrader startet.
+  Der Listener käme dort nie hoch, und ein Client landete stattdessen bei der
+  Order-Schnittstelle.
 - Nur Loopback — der Socket darf nie nach außen gebunden werden
 
 Zeilenweises JSON statt WebSocket, weil es in C# ohne Zusatzbibliothek
@@ -141,9 +165,18 @@ Bestätigung einschalten (`execution.live_trading_enabled`, geprüft in
 1. ~~NinjaScript-AddOn schreiben~~ → [`TradeXBridge.cs`](TradeXBridge.cs)
 2. ~~Socket-Client mit Heartbeat-Überwachung und Wiederverbindung~~ →
    [`tradex/live/nt8_feed.py`](../tradex/live/nt8_feed.py)
-3. **NinjaTrader 8 installieren** (Free License genügt) und das AddOn einbauen:
-   NinjaScript Editor → Rechtsklick auf *AddOns* → *New AddOn* → Rumpf durch
-   `TradeXBridge.cs` ersetzen → F5
+3. **AddOn einbauen.** Der schnellste Weg ist kein Copy-Paste im Editor,
+   sondern die Datei direkt an ihren Platz zu legen — NinjaTrader liest sie
+   von dort:
+
+   ```powershell
+   Copy-Item "bridge_nt8\TradeXBridge.cs" `
+     "$env:USERPROFILE\Documents\NinjaTrader 8\bin\Custom\AddOns\" -Force
+   ```
+
+   Danach in NinjaTrader: *New → NinjaScript Editor*, **F5**. NinjaTrader
+   kompiliert neu hinzugekommene Dateien **nicht** beim Start — ohne F5
+   passiert nichts, und zwar lautlos.
 4. Gegen **Market Replay** prüfen — deterministisch und kostenlos, deshalb der
    richtige erste Schritt vor jedem Echtzeitbezug
 5. CME Level 1 abonnieren (~4 USD/Monat) und gegen den Live-Feed prüfen
@@ -161,13 +194,41 @@ verschoben — ein Fehler, der nirgends knallt.
 wenn die *nächste* Bar begonnen hat (`bars.Count - 2`). Würde die laufende Bar
 hinausgehen, sähe die Engine live einen Zustand, den sie im Backtest nie sieht.
 
+### Das Wurzelsymbol muss abgebildet werden
+
+TradeX rechnet mit `MNQ`, NinjaTraders Datenanbieter will `MNQ SEP26`. Drei
+Wege, das automatisch aufzulösen, wurden an der laufenden Installation
+ausprobiert und **alle drei scheitern**:
+
+| Versuch | Ergebnis |
+|---|---|
+| `Instrument.GetInstrument("MNQ")` | `null` |
+| `Instrument.GetInstrumentFuzzy("MNQ")` | generischer Eintrag `MNQ` → Anbieter: *"Symbol is inaccessible / UnknownSymbol"* |
+| `MasterInstrument.GetInstrumentByDate(...)` | liefert denselben generischen Eintrag |
+| Suche über `Instrument.All` nach dem nächsten Verfall | findet den Kontrakt nicht |
+
+Deshalb steht der Kontraktname explizit in `config/instruments.yaml`:
+
+```yaml
+MNQ:
+  nt8_symbol: "MNQ SEP26"
+```
+
+Das ist ehrlicher als eine Automatik, die still den falschen Kontrakt zieht —
+aber es hat einen Preis: **beim Roll muss der Wert nachgezogen werden.** Der
+Feed übersetzt in beide Richtungen; die Sitzung sieht weiterhin nur `MNQ`.
+
 ## Abnahmekriterien
 
-Die Bridge gilt erst als fertig, wenn:
-
-- [ ] Über Market Replay erzeugte Bars **exakt** denen entsprechen, die
+- [x] Bars kommen mit korrekten OHLCV-Werten, aufsteigend, ohne Dubletten, im
+      richtigen Zeitraster und mit Bar-Beginn als Zeitstempel *(1380 Bars,
+      23.08.2026)*
+- [x] Verbindungsauf- und -abbau werden gemeldet; die Sitzung nimmt erst nach
+      bestätigter Verbindung Positionen auf
+- [ ] Bars aus einem **laufenden** Markt (bisher nur über `history` geprüft —
+      am Wochenende schließt keine Bar)
+- [ ] Über Market Replay erzeugte Bars entsprechen **exakt** denen, die
       `MultiTimeframeAggregator` aus denselben Ticks aggregiert
-- [ ] Verbindungsabbruch innerhalb von 15 Sekunden erkannt wird und die Engine
-      in einen Zustand geht, in dem keine neuen Trades entstehen
-- [ ] Ein Kontraktwechsel korrekt als `roll_boundary` ankommt
-- [ ] Ein Neustart des AddOns keine doppelten oder fehlenden Bars erzeugt
+- [ ] Ein Kontraktwechsel kommt als `roll_boundary` an *(im Python-Client
+      getestet, in NinjaTrader erst beim nächsten Roll beobachtbar)*
+- [ ] Ein Neustart des AddOns erzeugt keine doppelten oder fehlenden Bars
