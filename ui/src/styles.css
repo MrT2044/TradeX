@@ -1107,3 +1107,120 @@ pre {
 .equity__line--up {
   stroke: var(--ok);
 }
+/* --- Laufender Betrieb (Phase 7, Spec 22/24) ----------------------------- */
+
+.panel--session .panel__title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+/* Der Zustand steht im Titel und ist farbcodiert: wer das Panel nur streift,
+   soll "laeuft" von "angehalten" unterscheiden koennen, ohne zu lesen. */
+.session-state {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.session-state--running {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.session-state--halted {
+  color: var(--error);
+  border-color: var(--error);
+  background: rgba(209, 73, 77, 0.12);
+}
+.session-state--waiting {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.session-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.btn {
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 7px 14px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn code {
+  font-family: var(--font-mono);
+  margin-left: 6px;
+  color: var(--text-muted);
+}
+
+/* Der Not-Aus ist bewusst der auffaelligste Knopf im Panel. Er braucht keine
+   Rueckfrage: er verhindert nur NEUE Positionen, offene laufen weiter zu
+   ihrem Stop - ein versehentlicher Klick richtet keinen Schaden an. */
+.btn--danger {
+  flex: 1;
+  background: rgba(209, 73, 77, 0.16);
+  border-color: var(--error);
+  color: #ffb4b6;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+}
+.btn--danger:hover:not(:disabled) {
+  background: rgba(209, 73, 77, 0.28);
+  border-color: var(--error);
+}
+.btn--quiet {
+  color: var(--text-muted);
+}
+
+.session-hint {
+  margin-top: 8px;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.session-trades {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  max-height: 190px;
+  overflow-y: auto;
+}
+.session-trades__row {
+  display: grid;
+  grid-template-columns: 1fr 44px 62px 74px 1fr;
+  gap: 6px;
+  padding: 3px 6px;
+  border-radius: 3px;
+  background: var(--bg-raised);
+}
+.session-trades__row.pos {
+  border-left: 2px solid var(--ok);
+}
+.session-trades__row.neg {
+  border-left: 2px solid var(--error);
+}
+
+.pos {
+  color: var(--ok);
+}
+.neg {
+  color: var(--error);
+}

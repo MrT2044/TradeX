@@ -467,3 +467,48 @@ export interface StrategyState {
   no_trades_total: number;
   rejection_counts: Record<string, number>;
 }
+
+/** Zustand des laufenden Betriebs (Phase 7, Spec 22/24). */
+export interface SessionStatus {
+  active: boolean;
+  feed: string;
+  symbols: string[];
+  session_id: number;
+  warnings: string[];
+  stopped_by: string;
+  error: string;
+
+  running: boolean;
+  connected: boolean;
+  halted_reason: string;
+  accepts_entries: boolean;
+  mode: string;
+  started_ts: number;
+  last_bar_ts: number;
+  last_message_ts: number;
+  bars_seen: number;
+  signals: number;
+  trades_closed: number;
+  open_positions: number;
+  start_equity: number;
+  equity: number;
+  realized_pnl: number;
+  day_pnl: number;
+  trading_day: number;
+}
+
+export interface SessionRun {
+  id: number;
+  started_utc: string;
+  ended_utc: string | null;
+  mode: string;
+  feed: string;
+  symbols: string;
+  config_hash: string;
+  strategy_version: string;
+  backtest_version: string;
+  start_equity: number;
+  notes: string;
+  trades: number;
+  net_pnl: number;
+}

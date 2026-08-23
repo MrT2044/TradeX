@@ -11,6 +11,9 @@ import type {
   LoadResponse,
   LogEntry,
   Overlays,
+  SessionRun,
+  SessionStatus,
+  SimulatedTrade,
   StepResponse,
   StrategyState,
 } from './types';
@@ -115,4 +118,31 @@ export const api = {
     request<BacktestRun[]>(
       `/backtest/runs?symbol=${encodeURIComponent(symbol)}&limit=${limit}`,
     ),
+
+  // --- Laufender Betrieb (Phase 7) ---------------------------------------
+  session: () => request<SessionStatus>('/session'),
+
+  sessionStart: (symbols: string[], options: { feed?: string; speed?: number } = {}) =>
+    request<SessionStatus>('/session/start', {
+      method: 'POST',
+      body: JSON.stringify({
+        symbols,
+        feed: options.feed ?? 'replay',
+        speed: options.speed ?? 3600,
+      }),
+    }),
+
+  /**
+   * Kill Switch (Spec 24). Wirkt sofort und wartet auf nichts: keine neuen
+   * Positionen mehr. Offene Positionen laufen WEITER zu ihrem Stop - deshalb
+   * ist das hier nicht dasselbe wie `sessionStop`.
+   */
+  sessionHalt: () => request<SessionStatus>('/session/halt', { method: 'POST' }),
+  sessionResume: () => request<SessionStatus>('/session/resume', { method: 'POST' }),
+  sessionStop: () => request<SessionStatus>('/session/stop', { method: 'POST' }),
+
+  sessionTrades: (limit = 50) =>
+    request<SimulatedTrade[]>(`/session/trades?limit=${limit}`),
+
+  sessionRuns: (limit = 10) => request<SessionRun[]>(`/sessions?limit=${limit}`),
 };

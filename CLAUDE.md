@@ -20,6 +20,7 @@ Arbeitshinweise für dieses Repository. Was das Projekt *ist*, steht im
 | fertig | Registry, Multi-Instrument, Musterstatistik, News-Filter (Termine) |
 | offen | News-Filter (Schlagzeilen) — braucht erst eine Messung, siehe unten |
 | **Phase 5 läuft** | Papertrading steht, NinjaTrader-Bridge installiert und überträgt echte Bars |
+| **Phase 7 läuft** | Dashboard und Kill Switch im UI; Monitoring über `warnings` |
 
 Phase 4b stand **nicht im ursprünglichen Plan**. Phase 4 hat sie erzwungen: sie
 hat erstmals *gemessen*, dass die Pflichtkette nur ~10 Trades im Jahr erzeugt.
@@ -87,7 +88,7 @@ UI beim ersten Start, öffnet das Fenster; Argumente werden durchgereicht).
 reine LF-Dateien nur teilweise verarbeitet und `goto` dabei still bricht.
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/ -q      # Tests (aktuell 438)
+.\.venv\Scripts\python.exe -m pytest tests/ -q      # Tests (aktuell 454)
 .\.venv\Scripts\python.exe -m ruff check tradex tests scripts
 .\.venv\Scripts\python.exe -m tradex.shell          # Desktop-Fenster
 .\.venv\Scripts\python.exe -m tradex.shell --server # nur Engine, Port 8765
@@ -295,6 +296,32 @@ Die Wiedergabe ist **kein Ersatz für echte Daten** — sie prüft die Mechanik 
 Betriebs (Ausfallerkennung, Not-Aus, Persistenz) deterministisch und kostenlos.
 Genau das sieht `bridge_nt8/README.md` als ersten Schritt vor. Jede gespeicherte
 Sitzung trägt deshalb ihren Feed-Namen.
+
+### Phase 7: Dashboard und Kill Switch
+
+Der Betrieb ist jetzt aus der Oberfläche heraus sichtbar und steuerbar
+(`SessionPanel`, `/api/session/*`). Drei Entscheidungen, die den Unterschied
+machen:
+
+1. **Der Not-Aus wirkt, ohne auf den Sitzungsfaden zu warten.** `halt()` setzt
+   ein Feld in der Risk Engine — mehr nicht. Würde er dem Faden eine Nachricht
+   schicken und auf Bestätigung warten, wäre er genau dann wirkungslos, wenn
+   man ihn am dringendsten braucht.
+2. **Er hat keine Rückfrage.** Ein Not-Aus mit Bestätigungsdialog ist keiner.
+   Er kostet auch nichts: er verhindert nur *neue* Positionen.
+3. **`halt` und `stop` sind getrennt.** Angehalten heißt weiter Bars
+   verarbeiten und offene Positionen zu Ende führen; beendet heißt aufhören.
+   Wer im Störfall die Bars abklemmt, lässt Positionen ohne Stopüberwachung
+   zurück.
+
+**Höchstens eine Sitzung gleichzeitig.** Zwei hätten getrennte Risikobücher und
+zusammen das doppelte erlaubte Risiko — derselbe Fehler, den `portfolio.py`
+eine Ebene tiefer verhindert.
+
+`SessionManager.state()` liest **ohne Sperre**. Eine Sperre würde die Anzeige
+an den Sitzungsfaden koppeln, und ausgerechnet beim Beobachten eines hängenden
+Betriebs bliebe sie stehen. Der Preis sind Zahlen, die um Sekundenbruchteile
+veraltet sein können — für eine Anzeige der richtige Tausch.
 
 ### NinjaTrader: fünf Dinge, die beim Einrichten zugeschlagen haben
 
@@ -602,6 +629,7 @@ tradex/live/        feed.py         was ein Live-Feed liefern darf: nur GESCHLOS
                     session.py      Zustandsmaschine: Bars rein, Papertrades raus
                     runner.py       die Schleife: Zeit, Stille, Abbruch
                     store.py        Sitzung und Trades SOFORT haltbar machen
+                    manager.py      EINE Sitzung im Serverprozess + Kill Switch
 tradex/api/         FastAPI + DTOs = einziger UI-Vertrag
 tradex/service.py   Anwendungsschicht (Laden, Replay-Cursor, Protokoll)
 ui/                 React + lightweight-charts v5, deutsch

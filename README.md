@@ -436,7 +436,7 @@ Parallel `python -m tradex.shell --server` laufen lassen.)
 | **4b** | **Day-Trading-Umbau: Registry, Multi-Instrument, Musterstatistik, News-Filter** | **fertig** |
 | **5** | **Papertrading-Betrieb** | **läuft** — Wiedergabe-Feed fertig, Echtzeit offen |
 | 6 | News- und KI-Kontextschicht | Termine fertig, Schlagzeilen offen |
-| 7 | Dashboard, Kill Switch, Monitoring | offen |
+| **7** | **Dashboard, Kill Switch, Monitoring** | **läuft** — Betriebspanel und Not-Aus im UI |
 | 8 | Live Manual | offen |
 | 9 | Live Auto | offen |
 

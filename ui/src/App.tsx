@@ -11,6 +11,8 @@ import type {
   Integrity,
   LogEntry,
   Overlays,
+  SessionStatus,
+  SimulatedTrade,
   StrategyState,
 } from './api/types';
 import { TradeChart, type ChartToggles } from './chart/TradeChart';
@@ -18,6 +20,7 @@ import { de } from './i18n/de';
 import { AnalysisPanel } from './panels/AnalysisPanel';
 import { BacktestPanel } from './panels/BacktestPanel';
 import { ReplayControls } from './panels/ReplayControls';
+import { SessionPanel } from './panels/SessionPanel';
 import { StatusBar } from './panels/StatusBar';
 import { StrategyPanel } from './panels/StrategyPanel';
 import { SystemPanel } from './panels/SystemPanel';
@@ -58,6 +61,10 @@ export default function App() {
   const [toggles, setToggles] = useState<ChartToggles>(DEFAULT_TOGGLES);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [session, setSession] = useState<SessionStatus | null>(null);
+  const [sessionTrades, setSessionTrades] = useState<SimulatedTrade[]>([]);
+  const [sessionBusy, setSessionBusy] = useState(false);
 
   const symbols = useMemo(
     () => Array.from(new Set(coverage.map((item) => item.symbol))).sort(),
@@ -181,6 +188,46 @@ export default function App() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [timeframe]);
+
+  // --- Laufender Betrieb (Phase 7) -----------------------------------------
+  // Eigener Takt, unabhaengig von allem anderen: der Betrieb laeuft weiter,
+  // auch wenn niemand im Chart blaettert. Und er muss sichtbar bleiben, wenn
+  // die uebrige Oberflaeche gerade auf einen Backtest wartet - deshalb ohne
+  // `busy`-Sperre.
+  useEffect(() => {
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const state = await api.session();
+        if (cancelled) return;
+        setSession(state);
+        setSessionTrades(state.active && state.trades_closed > 0 ? await api.sessionTrades(20) : []);
+      } catch {
+        /* Der Betrieb ist nicht die Hauptansicht - ein Aussetzer darf hier
+           keine Fehlermeldung ueber den ganzen Bildschirm werfen. */
+      }
+    };
+    void tick();
+    const timer = window.setInterval(() => void tick(), 2000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, []);
+
+  const sessionAction = useCallback(
+    async (action: () => Promise<SessionStatus>) => {
+      setSessionBusy(true);
+      try {
+        setSession(await action());
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setSessionBusy(false);
+      }
+    },
+    [],
+  );
 
   // --- Wiedergabe ----------------------------------------------------------
   const advance = useCallback(
@@ -368,6 +415,16 @@ export default function App() {
             report={backtest}
             busy={backtesting || busy}
             onRun={() => void runBacktest()}
+          />
+          <SessionPanel
+            status={session}
+            trades={sessionTrades}
+            busy={sessionBusy}
+            symbol={symbol}
+            onStart={() => void sessionAction(() => api.sessionStart([symbol]))}
+            onHalt={() => void sessionAction(api.sessionHalt)}
+            onResume={() => void sessionAction(api.sessionResume)}
+            onStop={() => void sessionAction(api.sessionStop)}
           />
           <SystemPanel health={health} integrity={integrity} logs={logs} />
         </aside>

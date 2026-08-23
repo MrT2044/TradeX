@@ -16,7 +16,7 @@ from fastapi import FastAPI
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from tradex.api.routes import analysis, backtest, market, system
+from tradex.api.routes import analysis, backtest, market, session, system
 from tradex.api.state import get_service, shutdown_service
 from tradex.config import Config, get_config
 from tradex.logging_setup import get_logger, setup_logging
@@ -50,6 +50,7 @@ def create_app(config: Config | None = None) -> FastAPI:
     app.include_router(market.router, prefix="/api")
     app.include_router(analysis.router, prefix="/api")
     app.include_router(backtest.router, prefix="/api")
+    app.include_router(session.router, prefix="/api")
 
     @app.exception_handler(LookupError)
     async def _lookup_error(_request: object, exc: LookupError) -> JSONResponse:

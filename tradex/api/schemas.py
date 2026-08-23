@@ -30,6 +30,7 @@ from tradex.data.provider import ProviderCapabilities, ProviderHealth
 from tradex.data.store import Coverage
 from tradex.domain.bars import Bar, BarSeries
 from tradex.domain.instruments import Instrument
+from tradex.live.manager import ManagerState
 from tradex.persistence.models import Reason
 from tradex.strategy.setup import SetupCandidate
 from tradex.strategy.signal import StrategyDecision, TradeSignal
@@ -888,3 +889,85 @@ class BacktestRunDto(_Dto):
     profit_factor: float | None
     max_drawdown_pct: float
     notes: str = ""
+
+class SessionStatusDto(_Dto):
+    """Zustand des laufenden Betriebs (Spec Paragraph 22, Paragraph 24).
+
+    `warnings` steht wie beim Backtest-Bericht bewusst weit vorn: sie sagen,
+    ob den Zahlen daneben ueberhaupt zu trauen ist. Ein angehaltener Betrieb
+    mit huebschem Kontostand sieht sonst aus wie ein laufender.
+    """
+
+    active: bool
+    feed: str
+    symbols: tuple[str, ...]
+    session_id: int
+    warnings: tuple[str, ...]
+    stopped_by: str
+    error: str
+
+    running: bool
+    connected: bool
+    halted_reason: str
+    accepts_entries: bool
+    mode: str
+    started_ts: int
+    last_bar_ts: int
+    last_message_ts: int
+    bars_seen: int
+    signals: int
+    trades_closed: int
+    open_positions: int
+    start_equity: float
+    equity: float
+    realized_pnl: float
+    day_pnl: float
+    trading_day: int
+
+    @classmethod
+    def of(cls, state: ManagerState) -> SessionStatusDto:
+        s = state.status
+        return cls(
+            active=state.active,
+            feed=state.feed,
+            symbols=state.symbols,
+            session_id=state.session_id,
+            warnings=state.warnings,
+            stopped_by=state.stopped_by,
+            error=state.error,
+            running=bool(s and s.running),
+            connected=bool(s and s.connected),
+            halted_reason=s.halted_reason if s else "",
+            accepts_entries=bool(s and s.accepts_entries),
+            mode=s.mode if s else "",
+            started_ts=s.started_ts if s else 0,
+            last_bar_ts=s.last_bar_ts if s else 0,
+            last_message_ts=s.last_message_ts if s else 0,
+            bars_seen=s.bars_seen if s else 0,
+            signals=s.signals if s else 0,
+            trades_closed=s.trades_closed if s else 0,
+            open_positions=s.open_positions if s else 0,
+            start_equity=s.start_equity if s else 0.0,
+            equity=s.equity if s else 0.0,
+            realized_pnl=s.realized_pnl if s else 0.0,
+            day_pnl=s.day_pnl if s else 0.0,
+            trading_day=s.trading_day if s else 0,
+        )
+
+
+class SessionRunDto(_Dto):
+    """Kopfzeile einer gespeicherten Sitzung."""
+
+    id: int
+    started_utc: str
+    ended_utc: str | None
+    mode: str
+    feed: str
+    symbols: str
+    config_hash: str
+    strategy_version: str
+    backtest_version: str
+    start_equity: float
+    notes: str
+    trades: int
+    net_pnl: float

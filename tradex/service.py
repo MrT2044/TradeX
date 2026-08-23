@@ -33,6 +33,8 @@ from tradex.data.store import BarStore, Coverage
 from tradex.domain.bars import Bar, BarSeries
 from tradex.domain.enums import Timeframe, TradingMode
 from tradex.domain.instruments import Instrument
+from tradex.live.manager import SessionManager
+from tradex.live.store import SessionStore
 from tradex.logging_setup import get_logger
 from tradex.persistence.db import init_database
 from tradex.persistence.decision_log import DecisionLog, utc_now_iso
@@ -99,6 +101,11 @@ class TradexService:
         self.backtest_store = BacktestStore(self.database)
         self.config_hash = self.decision_log.register_config(self.config_path)
         self._backtests: dict[str, BacktestReport] = {}
+        # Der laufende Betrieb (Phase 7). Bewusst hier und nicht im
+        # API-Modul: dieselbe Engine soll sich headless genauso betreiben
+        # lassen wie hinter der Oberflaeche.
+        self.sessions = SessionManager(config, get_instruments())
+        self.session_store = SessionStore(self.database)
 
         self.providers = ProviderRegistry()
         self.providers.register(ReplayProvider(self.store))
@@ -112,8 +119,18 @@ class TradexService:
         )
 
     def close(self) -> None:
+        # Zuerst den Betrieb anhalten, dann die Datenbanken schliessen: eine
+        # noch laufende Sitzung wuerde sonst in eine geschlossene Verbindung
+        # schreiben, und der letzte Trade waere genau der, der fehlt.
+        if self.sessions.is_running:
+            self.sessions.stop()
+        self.session_store.close()
         self.decision_log.close()
         self.backtest_store.close()
+
+    def session_runs(self, limit: int = 20) -> list[dict[str, object]]:
+        """Frueher gelaufene Sitzungen aus dem Archiv."""
+        return self.session_store.sessions(limit)
 
     # -------------------------------------------------------------- Stammdaten
     def instruments(self) -> dict[str, Instrument]:

@@ -37,12 +37,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from tradex.backtest import metrics as M
 from tradex.backtest.execution import SimulatedTrade
 from tradex.config import get_config, get_instrument, resolved_config_path
-from tradex.data.store import BarStore
 from tradex.domain.bars import from_ns, to_ns
-from tradex.live.nt8_feed import DEFAULT_HOST, DEFAULT_PORT, NinjaTraderFeed
-from tradex.live.replay_feed import ReplayFeed
+from tradex.live.manager import SessionRequest, build_feed, build_session
+from tradex.live.nt8_feed import DEFAULT_HOST, DEFAULT_PORT
 from tradex.live.runner import SessionRunner
-from tradex.live.session import SessionConfig, TradingSession
+from tradex.live.session import TradingSession
 from tradex.live.store import SessionStore
 from tradex.logging_setup import setup_logging
 from tradex.persistence.db import init_database
@@ -135,39 +134,30 @@ def main() -> int:
     symbols = [s.strip().upper() for s in args.symbol.split(",") if s.strip()]
     instruments = {name: get_instrument(name) for name in symbols}
 
-    if args.feed == "nt8":
-        # NinjaTrader will den Kontraktnamen ("MNQ SEP26"), TradeX rechnet mit
-        # dem Wurzelsymbol ("MNQ"). Die Zuordnung steht in instruments.yaml -
-        # nicht hier, und schon gar nicht geraten.
-        kontrakte = {s: instruments[s].nt8_symbol for s in symbols if instruments[s].nt8_symbol}
-        for symbol, nt8 in kontrakte.items():
-            print(f"  {symbol} -> NinjaTrader-Kontrakt '{nt8}'")
-        feed: ReplayFeed | NinjaTraderFeed = NinjaTraderFeed(
-            tuple(symbols),
-            config.data.base_timeframe,
-            host=args.host,
-            port=args.port,
-            contracts=kontrakte,
-        )
-        total_bars = 0
-    elif args.feed == "replay":
-        store = BarStore(config.path(config.data.parquet_dir))
-        series_by_symbol = {}
-        for name in symbols:
-            series = store.read(
-                name, config.data.base_timeframe, _parse_date(args.start), _parse_date(args.end)
-            )
-            if len(series) == 0:
-                print(f"Keine {config.data.base_timeframe.value}-Daten fuer {name}.")
-                return 1
-            series_by_symbol[name] = series
-        feed = ReplayFeed(
-            series_by_symbol, speed=args.speed, base_seconds=config.data.base_timeframe.seconds
-        )
-        total_bars = feed.total_bars
-    else:
-        print(f"Unbekannter Feed '{args.feed}'. Vorhanden: replay, nt8.")
+    # Gebaut wird ueber dieselben Funktionen wie im Serverbetrieb. Zwei
+    # Konstruktionswege liefen sonst irgendwann mit verschiedenen
+    # Zusammenstellungen - und niemand wuesste, welche die gemessene ist.
+    request = SessionRequest(
+        symbols=tuple(symbols),
+        feed=args.feed,
+        speed=args.speed,
+        start_ts=_parse_date(args.start),
+        end_ts=_parse_date(args.end),
+        host=args.host,
+        port=args.port,
+        notes=args.notes,
+        save=not args.no_save,
+        max_bars=args.max_bars,
+    )
+    for name in symbols:
+        if args.feed == "nt8" and instruments[name].nt8_symbol:
+            print(f"  {name} -> NinjaTrader-Kontrakt '{instruments[name].nt8_symbol}'")
+    try:
+        feed = build_feed(request, config, instruments)
+    except LookupError as error:
+        print(error)
         return 1
+    total_bars = getattr(feed, "total_bars", 0)
 
     sessions: SessionStore | None = None
     if not args.no_save:
@@ -182,17 +172,7 @@ def main() -> int:
             # Beides sollte man wissen, bevor man eine neue startet.
             print(f"HINWEIS: {len(offen)} fruehere Sitzung(en) ohne sauberes Ende in der Datenbank.")
 
-    session = TradingSession(
-        instruments,
-        config,
-        feed_name=feed.name,
-        session_config=SessionConfig(
-            # Bei beschleunigter Wiedergabe kaeme die Stille-Ueberwachung sonst
-            # nie zum Zug; bei Echtzeit ist es der Wert aus der Bridge-Spec.
-            max_silence_seconds=15.0,
-            trade_sink=sessions.record_trade if sessions else None,
-        ),
-    )
+    session = build_session(request, config, instruments, feed.name, sessions)
 
     if sessions is not None:
         sessions.start(

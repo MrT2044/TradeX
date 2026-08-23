@@ -370,6 +370,31 @@ export const de = {
     progress: 'Fortschritt',
     speed: 'Tempo',
   },
+  session: {
+    title: 'Betrieb',
+    stateIdle: 'gestoppt',
+    stateRunning: 'laeuft',
+    stateWaiting: 'wartet auf Feed',
+    stateHalted: 'angehalten',
+    feed: 'Datenquelle',
+    symbols: 'Instrumente',
+    bars: 'verarbeitete Bars',
+    signals: 'Signale',
+    openPositions: 'offene Positionen',
+    closedTrades: 'geschlossene Trades',
+    equity: 'Konto',
+    dayPnl: 'Tagesergebnis',
+    trades: 'Letzte Trades',
+    start: 'Papertrading starten',
+    halt: 'NOT-AUS',
+    resume: 'Fortsetzen',
+    stop: 'Sitzung beenden',
+    stoppedBy: 'Beendet durch',
+    haltHint:
+      'Der Not-Aus verhindert NEUE Positionen. Offene Positionen laufen weiter zu ihrem Stop - sie ungeschuetzt zu lassen waere gefaehrlicher als die Stoerung.',
+    idleHint:
+      'Papertrading: echte Entscheidungen, vollstaendig simulierte Ausfuehrung. Es fliesst kein Geld - es gibt keine Broker-Anbindung.',
+  },
   system: {
     title: 'System',
     health: 'Systemzustand',
@@ -418,6 +443,7 @@ export const de = {
     error: 'Fehler',
     retry: 'Erneut versuchen',
     of: 'von',
+    loading: 'Laedt ...',
   },
 };
 
