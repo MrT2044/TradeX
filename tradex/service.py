@@ -104,7 +104,7 @@ class TradexService:
         # Der laufende Betrieb (Phase 7). Bewusst hier und nicht im
         # API-Modul: dieselbe Engine soll sich headless genauso betreiben
         # lassen wie hinter der Oberflaeche.
-        self.sessions = SessionManager(config, get_instruments())
+        self.sessions = SessionManager(config, get_instruments(), events=self.decision_log)
         self.session_store = SessionStore(self.database)
 
         self.providers = ProviderRegistry()

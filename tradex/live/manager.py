@@ -31,6 +31,7 @@ der beiden die gemessene ist.
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from tradex.backtest.execution import SimulatedTrade
@@ -46,7 +47,8 @@ from tradex.live.session import HALT_MANUAL, SessionConfig, SessionStatus, Tradi
 from tradex.live.store import SessionStore
 from tradex.logging_setup import get_logger
 from tradex.persistence.db import init_database
-from tradex.persistence.decision_log import DecisionLog
+from tradex.persistence.decision_log import DecisionLog, utc_now_iso
+from tradex.persistence.models import SystemEvent
 
 log = get_logger(__name__)
 
@@ -122,6 +124,7 @@ def build_session(
     instruments: dict[str, Instrument],
     feed_name: str,
     sink: SessionStore | None,
+    events: DecisionLog | None = None,
 ) -> TradingSession:
     return TradingSession(
         {name: instruments[name] for name in request.symbols},
@@ -129,8 +132,41 @@ def build_session(
         feed_name=feed_name,
         session_config=SessionConfig(
             trade_sink=sink.record_trade if sink is not None else None,
+            event_sink=_event_writer(events, feed_name, request.symbols) if events else None,
         ),
     )
+
+
+def _event_writer(
+    log_db: DecisionLog, feed_name: str, symbols: tuple[str, ...]
+) -> Callable[[int, str, str], None]:
+    """Betriebsereignisse in `system_events` schreiben (Spec Paragraph 24).
+
+    Warum in die Datenbank und nicht nur ins Textlog: die Frage "warum stand
+    der Betrieb heute Nacht?" beantwortet man am naechsten Morgen, und dann
+    ist eine Abfrage mehr wert als eine rotierende Datei. Die Tabelle gibt es
+    seit Migration 1 - benutzt hat sie bisher niemand.
+    """
+    levels = {"halt": "warning", "error": "error"}
+
+    def write(ts: int, kind: str, text: str) -> None:
+        try:
+            log_db.event(
+                SystemEvent(
+                    ts_utc=utc_now_iso(),
+                    level=levels.get(kind, "info"),
+                    category=f"session.{kind}",
+                    message=text,
+                    payload={"feed": feed_name, "symbols": ",".join(symbols), "ts": ts},
+                )
+            )
+        except Exception:
+            # Ein Schreibfehler im Protokoll darf den Betrieb nicht anhalten.
+            # Umgekehrt waere es falsch herum: dann brechen Positionen ab,
+            # weil eine Datenbank klemmt.
+            log.warning("betriebsereignis_nicht_gespeichert", art=kind, text=text)
+
+    return write
 
 
 class SessionManager:
@@ -141,9 +177,20 @@ class SessionManager:
     Fehler, den `portfolio.py` eine Ebene tiefer verhindert.
     """
 
-    def __init__(self, config: Config, instruments: dict[str, Instrument]) -> None:
+    def __init__(
+        self,
+        config: Config,
+        instruments: dict[str, Instrument],
+        events: DecisionLog | None = None,
+    ) -> None:
         self.config = config
         self.instruments = instruments
+        # EINE Verbindung fuer die Lebensdauer des Managers, von aussen
+        # hereingereicht und von aussen geschlossen. Eine je Sitzung waere ein
+        # Wettlauf: ein Not-Aus trifft regelmaessig eine Sitzung, die gerade
+        # zu Ende gelaufen ist - und schriebe dann in eine geschlossene
+        # Verbindung. Genau das ist beim Testen passiert.
+        self._events = events
         self._lock = threading.Lock()
         self._session: TradingSession | None = None
         self._runner: SessionRunner | None = None
@@ -169,7 +216,12 @@ class SessionManager:
 
             feed = build_feed(request, self.config, self.instruments)
             store = self._open_store(request, feed.name)
-            session = build_session(request, self.config, self.instruments, feed.name, store)
+            # Betriebsereignisse landen immer in der Datenbank, auch wenn die
+            # Sitzung selbst nicht archiviert wird: "warum stand der Betrieb?"
+            # ist unabhaengig davon, ob die Trades interessant waren.
+            session = build_session(
+                request, self.config, self.instruments, feed.name, store, self._events
+            )
             runner = SessionRunner(session, feed)
 
             self._session, self._runner, self._store = session, runner, store

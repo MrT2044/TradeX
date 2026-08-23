@@ -88,7 +88,7 @@ UI beim ersten Start, öffnet das Fenster; Argumente werden durchgereicht).
 reine LF-Dateien nur teilweise verarbeitet und `goto` dabei still bricht.
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/ -q      # Tests (aktuell 454)
+.\.venv\Scripts\python.exe -m pytest tests/ -q      # Tests (aktuell 456)
 .\.venv\Scripts\python.exe -m ruff check tradex tests scripts
 .\.venv\Scripts\python.exe -m tradex.shell          # Desktop-Fenster
 .\.venv\Scripts\python.exe -m tradex.shell --server # nur Engine, Port 8765
@@ -317,6 +317,19 @@ machen:
 **Höchstens eine Sitzung gleichzeitig.** Zwei hätten getrennte Risikobücher und
 zusammen das doppelte erlaubte Risiko — derselbe Fehler, den `portfolio.py`
 eine Ebene tiefer verhindert.
+
+**Betriebsereignisse gehen in `system_events`**, nicht nur ins Textlog: „Warum
+stand der Betrieb heute Nacht?" beantwortet man am nächsten Morgen, und dann
+ist eine Abfrage mehr wert als eine rotierende Datei. Die Tabelle gibt es seit
+Migration 1 und wurde bis Phase 7 von niemandem benutzt. Geschrieben wird
+**auch dann, wenn die Sitzung nicht archiviert wird** — die Frage nach dem
+Grund hängt nicht daran, ob die Trades interessant waren.
+
+Der Manager hält dafür **eine** Datenbankverbindung über seine ganze
+Lebensdauer, hereingereicht vom Dienst. Eine je Sitzung war die erste Fassung
+und ein Wettlauf: ein Not-Aus trifft regelmäßig eine Sitzung, die gerade zu
+Ende gelaufen ist, und schriebe dann in eine geschlossene Verbindung. Beim
+ersten Testlauf ist genau das passiert.
 
 `SessionManager.state()` liest **ohne Sperre**. Eine Sperre würde die Anzeige
 an den Sitzungsfaden koppeln, und ausgerechnet beim Beobachten eines hängenden

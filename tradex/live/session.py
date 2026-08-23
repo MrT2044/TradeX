@@ -136,6 +136,12 @@ class SessionConfig:
     trade_sink: Callable[[SimulatedTrade], None] | None = None
     """Wohin fertige Trades sofort gehen. Ohne Senke bleiben sie nur im
     Speicher - fuer Tests richtig, fuer den Betrieb nicht."""
+    event_sink: Callable[[int, str, str], None] | None = None
+    """Wohin Betriebsereignisse gehen: (ts, Art, Text).
+
+    Dieselbe Ueberlegung wie bei `trade_sink`, nur wichtiger: ein Not-Aus um
+    drei Uhr nachts oder ein Verbindungsabriss muss auch dann nachvollziehbar
+    sein, wenn niemand zugesehen und niemand die Konsole aufgehoben hat."""
 
 
 class TradingSession:
@@ -308,7 +314,14 @@ class TradingSession:
         self.halt(HALT_MANUAL)
 
     def _note(self, kind: str, text: str) -> None:
-        self.events.append((self.clock(), kind, text))
+        moment = self.clock()
+        self.events.append((moment, kind, text))
+        if self.params.event_sink is not None:
+            # Sofort hinausgeben, nicht beim naechsten Abfragen: waere die
+            # Senke abfragegetrieben, verschwaende jedes Ereignis, das
+            # zwischen zwei Abfragen passiert - und der Absturz danach
+            # nimmt den Rest mit.
+            self.params.event_sink(moment, kind, text)
 
     # ------------------------------------------------------------------ Auskunft
     @property

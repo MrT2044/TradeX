@@ -160,11 +160,15 @@ def main() -> int:
     total_bars = getattr(feed, "total_bars", 0)
 
     sessions: SessionStore | None = None
+    events: DecisionLog | None = None
     if not args.no_save:
         database = config.path(config.data.database)
         init_database(database)
-        with DecisionLog(database) as log:
-            config_hash = log.register_config(resolved_config_path())
+        # Bleibt offen, solange die Sitzung laeuft: hierhin gehen auch die
+        # Betriebsereignisse (Not-Aus, Verbindungswechsel). Ein Lauf, der
+        # nachts abbricht, soll das in der Datenbank hinterlassen.
+        events = DecisionLog(database)
+        config_hash = events.register_config(resolved_config_path())
         sessions = SessionStore(database)
         offen = sessions.unfinished()
         if offen:
@@ -172,7 +176,7 @@ def main() -> int:
             # Beides sollte man wissen, bevor man eine neue startet.
             print(f"HINWEIS: {len(offen)} fruehere Sitzung(en) ohne sauberes Ende in der Datenbank.")
 
-    session = build_session(request, config, instruments, feed.name, sessions)
+    session = build_session(request, config, instruments, feed.name, sessions, events)
 
     if sessions is not None:
         sessions.start(
@@ -208,6 +212,8 @@ def main() -> int:
     if sessions is not None:
         sessions.finish()
         sessions.close()
+    if events is not None:
+        events.close()
 
     _summary(session, result, config)
     # Wie beim Backtest: keine Trades ist kein Erfolg, sondern ein Befund.

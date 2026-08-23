@@ -24,6 +24,7 @@ from tradex.config import load_config
 from tradex.data.store import BarStore
 from tradex.domain.bars import BarSeries, to_ns
 from tradex.domain.enums import Timeframe
+from tradex.persistence.db import connect
 from tradex.service import TradexService
 
 SYMBOL = "MNQ_DEMO"
@@ -236,6 +237,47 @@ def test_nicht_gespeicherte_sitzung_landet_nicht_im_archiv(client: TestClient):
     start(client, save=False, max_bars=200)
     wait_until(client, lambda b: not b["active"])
     assert client.get("/api/sessions").json() == []
+
+
+def test_betriebsereignisse_landen_in_der_datenbank(client: TestClient):
+    """Ein Not-Aus um drei Uhr nachts muss am Morgen nachweisbar sein.
+
+    Das Textlog rotiert und ist nicht abfragbar. `system_events` gibt es seit
+    Migration 1 - der laufende Betrieb hat bisher nichts hineingeschrieben.
+    """
+    start(client, save=False, max_bars=300)
+    wait_until(client, lambda b: b["bars_seen"] > 50)
+    client.post("/api/session/halt")
+    wait_until(client, lambda b: not b["active"])
+
+    service = api_state.get_service()
+    with connect(service.database) as conn:
+        rows = conn.execute(
+            "SELECT category, level, message FROM system_events "
+            "WHERE category LIKE 'session.%' ORDER BY id"
+        ).fetchall()
+
+    kategorien = [row["category"] for row in rows]
+    assert "session.halt" in kategorien
+    assert "session.feed" in kategorien
+    halts = [row for row in rows if row["category"] == "session.halt"]
+    assert all(row["level"] == "warning" for row in halts), "ein Not-Aus ist keine Randnotiz"
+    assert any("manual" in row["message"] for row in halts)
+
+
+def test_ereignisse_werden_auch_ohne_archivierung_geschrieben(client: TestClient):
+    """"Warum stand der Betrieb?" ist unabhaengig davon, ob die Trades
+    interessant genug zum Aufheben waren."""
+    start(client, save=False, max_bars=200)
+    wait_until(client, lambda b: not b["active"])
+
+    service = api_state.get_service()
+    with connect(service.database) as conn:
+        anzahl = conn.execute(
+            "SELECT COUNT(*) AS n FROM system_events WHERE category LIKE 'session.%'"
+        ).fetchone()["n"]
+    assert anzahl > 0
+    assert client.get("/api/sessions").json() == [], "archiviert wurde trotzdem nichts"
 
 
 def test_trades_der_laufenden_sitzung_sind_abrufbar(client: TestClient):
