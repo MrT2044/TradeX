@@ -172,8 +172,14 @@ def strategy(symbol: str, limit: int = Query(default=30, ge=1, le=500)) -> Strat
     return StrategyStateDto(
         symbol=engine.symbol,
         enabled=service.config.strategy.enabled,
-        setup_timeframe=engine.setup_tf.value,
-        confirmation_timeframe=engine.confirmation_tf.value,
+        # Aus der Konfiguration, nicht aus dem Portfolio: seit dem Umbau auf
+        # mehrere Strategien fuehrt `service.strategy()` ein StrategyPortfolio,
+        # und das hat keine Zeitebenen - es hat mehrere Strategien, die je
+        # eigene haben koennten. `ChainStrategy` liest dieselben zwei Werte aus
+        # genau dieser Stelle; damit zeigt die Oberflaeche die Fassung an, nach
+        # der auch entschieden wird.
+        setup_timeframe=service.config.strategy.setup_timeframe.value,
+        confirmation_timeframe=service.config.strategy.confirmation_timeframe.value,
         stop_anchor=service.config.stops.anchor,
         min_rr=service.config.risk.min_rr,
         active_setups=tuple(SetupDto.of(c) for c in engine.active_candidates()),

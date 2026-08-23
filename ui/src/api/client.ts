@@ -18,6 +18,10 @@ import type {
   StrategyState,
 } from './types';
 
+/** Grenze von `/step` je Anfrage - muss zu `StepRequest.count` in
+ *  `tradex/api/routes/analysis.py` passen. */
+const MAX_STEP = 100_000;
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -26,6 +30,33 @@ export class ApiError extends Error {
     super(message);
     this.name = 'ApiError';
   }
+}
+
+/** Aus dem `detail`-Feld einer Fehlerantwort einen lesbaren Satz machen.
+ *
+ * Eine Meldung, die den Fehler verschweigt, ist schlimmer als keine: sie sieht
+ * aus, als haette man hingesehen. Deshalb wird hier jede Form ausgepackt, die
+ * FastAPI liefern kann - Text, Liste von Pruefergebnissen, einzelnes Objekt -
+ * und im schlimmsten Fall das JSON selbst gezeigt. Unlesbar ist immer noch
+ * besser als nichtssagend.
+ */
+function beschreibeFehler(detail: unknown): string {
+  if (!detail) return '';
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) return detail.map(beschreibeFehler).filter(Boolean).join('; ');
+  if (typeof detail === 'object') {
+    const eintrag = detail as { msg?: unknown; loc?: unknown };
+    if (typeof eintrag.msg === 'string') {
+      const feld = Array.isArray(eintrag.loc) ? eintrag.loc.join('.') : '';
+      return feld ? `${feld}: ${eintrag.msg}` : eintrag.msg;
+    }
+    try {
+      return JSON.stringify(detail);
+    } catch {
+      return '';
+    }
+  }
+  return String(detail);
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -44,8 +75,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // der direkt anzeigbar ist. Nur bei echten Fehlern auf den Status zurueckfallen.
     let detail = `${response.status} ${response.statusText}`;
     try {
-      const body = (await response.json()) as { detail?: string };
-      if (body.detail) detail = body.detail;
+      const body = (await response.json()) as { detail?: unknown };
+      // `detail` ist NICHT immer ein Text: bei einer abgelehnten Anfrage (422)
+      // liefert FastAPI eine Liste von Objekten. Die landete ungeprueft in der
+      // Meldung und stand dann als "[object Object]" auf dem Bildschirm - also
+      // genau dort, wo die Ursache haette stehen sollen.
+      detail = beschreibeFehler(body.detail) || detail;
     } catch {
       /* Antwort war kein JSON - Status genuegt */
     }
@@ -88,11 +123,34 @@ export const api = {
       `/overlays?symbol=${encodeURIComponent(symbol)}&timeframe=${timeframe}`,
     ),
 
-  step: (symbol: string, count: number) =>
-    request<StepResponse>('/step', {
+  /** Bars analysieren - notfalls in mehreren Anfragen.
+   *
+   * `/load` nimmt bis zu 400.000 Bars an, `/step` aber nur 100.000 je Anfrage.
+   * Diese Grenze ist richtig: eine einzelne Anfrage soll nicht unbegrenzt lange
+   * rechnen. Falsch war, dass die Oberflaeche sie nicht kannte - der Warmlauf
+   * rechnet 60% der geladenen Bars aus und schickte bei vollem Datenbestand
+   * 120.000, worauf die Engine mit 422 ablehnte. Aufgeteilt wird deshalb hier,
+   * an der einen Stelle, die jeder Aufrufer benutzt: "ans Ende springen" lief
+   * sonst in denselben Fehler.
+   */
+  step: async (symbol: string, count: number): Promise<StepResponse> => {
+    let offen = Math.max(1, Math.trunc(count));
+    let antwort = await request<StepResponse>('/step', {
       method: 'POST',
-      body: JSON.stringify({ symbol, count }),
-    }),
+      body: JSON.stringify({ symbol, count: Math.min(offen, MAX_STEP) }),
+    });
+    offen -= MAX_STEP;
+    // `exhausted` bricht ab, sobald keine Bars mehr da sind - sonst liefe die
+    // Schleife bei einer zu grossen Anforderung ins Leere weiter.
+    while (offen > 0 && !antwort.exhausted) {
+      antwort = await request<StepResponse>('/step', {
+        method: 'POST',
+        body: JSON.stringify({ symbol, count: Math.min(offen, MAX_STEP) }),
+      });
+      offen -= MAX_STEP;
+    }
+    return antwort;
+  },
 
   reset: (symbol: string) =>
     request<StepResponse>(`/reset?symbol=${encodeURIComponent(symbol)}`, { method: 'POST' }),

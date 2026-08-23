@@ -22,6 +22,7 @@ import { MobileDashboard } from './panels/MobileDashboard';
 import { de } from './i18n/de';
 import { AnalysisPanel } from './panels/AnalysisPanel';
 import { BacktestPanel } from './panels/BacktestPanel';
+import { ErrorBanner } from './panels/ErrorBanner';
 import { ReplayControls } from './panels/ReplayControls';
 import { SessionPanel } from './panels/SessionPanel';
 import { StatusBar } from './panels/StatusBar';
@@ -31,6 +32,17 @@ import { SystemPanel } from './panels/SystemPanel';
 const TIMEFRAMES = ['1m', '5m', '15m', '1h', '4h'];
 const ENTRY_TIMEFRAME = '1m';
 const PLAY_INTERVAL_MS = 400;
+
+/** Bars, die beim Symbolwechsel sofort durchlaufen, damit das Chart nicht leer
+ *  bleibt.
+ *
+ *  Eine feste Zahl, KEIN Anteil des Datenbestands. Vorher waren es 60% der
+ *  geladenen Bars - bei vollem Bestand also 120.000 Stueck, gemessene 90
+ *  Sekunden, in denen die Oberflaeche leer dasteht und kaputt aussieht. Ein
+ *  Anteil laesst die Wartezeit ausgerechnet dann wachsen, wenn man mehr
+ *  Historie hat. 10.000 Minutenbars decken den 5m-Chart (1500 Bars = 7.500
+ *  Minuten) vollstaendig ab und kosten rund fuenf Sekunden. */
+const WARMUP_BARS = 10_000;
 
 const DEFAULT_TOGGLES: ChartToggles = {
   fvg: true,
@@ -151,7 +163,7 @@ export default function App() {
 
         // Einen Teil sofort durchlaufen lassen, damit nicht ein leeres Chart
         // dasteht - aber nicht alles, damit noch etwas zum Zusehen bleibt.
-        const warmup = Math.min(loaded.base_bars, Math.floor(loaded.base_bars * 0.6));
+        const warmup = Math.min(loaded.base_bars, WARMUP_BARS);
         if (warmup > 0) {
           const stepped = await api.step(symbol, warmup);
           if (cancelled) return;
@@ -367,14 +379,7 @@ export default function App() {
         busy={busy}
       />
 
-      {error && (
-        <div className="banner banner--error">
-          <strong>{de.common.error}:</strong> {error}
-          <button type="button" onClick={() => setError(null)}>
-            ×
-          </button>
-        </div>
-      )}
+      {error && <ErrorBanner message={error} onDismiss={() => setError(null)} />}
 
       <main className="layout">
         <div className="layout__main">

@@ -956,6 +956,28 @@ pre {
   font-size: 16px;
   color: inherit;
 }
+/* Lange Meldungen umbrechen statt die Knoepfe aus dem Band zu schieben -
+   eine Fehlermeldung, die man nicht mehr wegklicken kann, ist ein zweiter
+   Fehler. `min-width: 0` ist noetig, sonst wehrt sich ein Flex-Kind gegen
+   das Schrumpfen unter seine Inhaltsbreite. */
+.banner__text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.banner__copy {
+  margin-left: 0;
+  flex: 0 0 auto;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding: 3px 8px;
+  border: 1px solid currentColor;
+  border-radius: 4px;
+  opacity: 0.8;
+}
+.banner__copy:hover {
+  opacity: 1;
+}
 
 .empty {
   margin: auto;

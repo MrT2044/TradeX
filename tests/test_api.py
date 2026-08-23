@@ -160,6 +160,30 @@ def test_analyse_liefert_bias_mit_begruendungen(client: TestClient):
         assert isinstance(reason["ok"], bool)
 
 
+def test_strategiezustand_ist_abrufbar(client: TestClient):
+    """Waechter: dieser Endpunkt hatte einen 500er, den niemand bemerkte.
+
+    `/api/strategy` griff auf `engine.setup_tf` zu - eine Eigenschaft, die es
+    seit dem Umbau auf mehrere Strategien nicht mehr gibt, weil dort ein
+    StrategyPortfolio steht. Die Oberflaeche zeigte daraufhin dauerhaft "Keine
+    Daten geladen", ohne dass irgendwo ein Fehler sichtbar wurde. Aufgefallen
+    ist es erst im Netzwerkprotokoll des Browsers - kein Test rief den
+    Endpunkt je auf.
+    """
+    client.post("/api/load", json={"symbol": SYMBOL, "feed_all": True})
+    response = client.get(f"/api/strategy?symbol={SYMBOL}&limit=30")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["symbol"] == SYMBOL
+    # Gegen die Konfiguration, nicht gegen feste Texte: die Anzeige muss die
+    # Zeitebenen melden, nach denen auch entschieden wird.
+    erwartet = load_config(PROJECT_ROOT / "config" / "default.yaml")
+    assert body["setup_timeframe"] == erwartet.strategy.setup_timeframe.value
+    assert body["confirmation_timeframe"] == erwartet.strategy.confirmation_timeframe.value
+    assert body["decisions_total"] == body["trades_total"] + body["no_trades_total"]
+
+
 def test_overlays_enthalten_alle_erkannten_muster(client: TestClient):
     client.post("/api/load", json={"symbol": SYMBOL, "feed_all": True})
     body = client.get(f"/api/overlays?symbol={SYMBOL}&timeframe=5m").json()
