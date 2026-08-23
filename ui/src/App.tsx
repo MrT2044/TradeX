@@ -15,7 +15,10 @@ import type {
   SimulatedTrade,
   StrategyState,
 } from './api/types';
+import { useIsMobile } from './api/useIsMobile';
+import { useSessionStream } from './api/useSessionStream';
 import { TradeChart, type ChartToggles } from './chart/TradeChart';
+import { MobileDashboard } from './panels/MobileDashboard';
 import { de } from './i18n/de';
 import { AnalysisPanel } from './panels/AnalysisPanel';
 import { BacktestPanel } from './panels/BacktestPanel';
@@ -190,30 +193,41 @@ export default function App() {
   }, [timeframe]);
 
   // --- Laufender Betrieb (Phase 7) -----------------------------------------
-  // Eigener Takt, unabhaengig von allem anderen: der Betrieb laeuft weiter,
-  // auch wenn niemand im Chart blaettert. Und er muss sichtbar bleiben, wenn
-  // die uebrige Oberflaeche gerade auf einen Backtest wartet - deshalb ohne
-  // `busy`-Sperre.
+  // Kommt ueber einen Ereignisstrom herein, unabhaengig von allem anderen: der
+  // Betrieb laeuft weiter, auch wenn niemand im Chart blaettert, und er muss
+  // sichtbar bleiben, waehrend die uebrige Oberflaeche auf einen Backtest
+  // wartet - deshalb ohne `busy`-Sperre.
+  const live = useSessionStream();
+
   useEffect(() => {
+    if (live.status) setSession(live.status);
+  }, [live.status]);
+
+  // Trades werden nicht mitgestroemt: sie aendern sich selten, sind aber je
+  // Eintrag umfangreich. Sie werden nachgeholt, wenn ihre Zahl steigt.
+  const tradesSeen = useRef(-1);
+  useEffect(() => {
+    const closed = live.status?.trades_closed ?? 0;
+    if (closed === tradesSeen.current) return;
+    tradesSeen.current = closed;
+    if (!live.status?.active || closed === 0) {
+      setSessionTrades([]);
+      return;
+    }
     let cancelled = false;
-    const tick = async () => {
+    void (async () => {
       try {
-        const state = await api.session();
-        if (cancelled) return;
-        setSession(state);
-        setSessionTrades(state.active && state.trades_closed > 0 ? await api.sessionTrades(20) : []);
+        const list = await api.sessionTrades(20);
+        if (!cancelled) setSessionTrades(list);
       } catch {
         /* Der Betrieb ist nicht die Hauptansicht - ein Aussetzer darf hier
            keine Fehlermeldung ueber den ganzen Bildschirm werfen. */
       }
-    };
-    void tick();
-    const timer = window.setInterval(() => void tick(), 2000);
+    })();
     return () => {
       cancelled = true;
-      window.clearInterval(timer);
     };
-  }, []);
+  }, [live.status]);
 
   const sessionAction = useCallback(
     async (action: () => Promise<SessionStatus>) => {
@@ -296,6 +310,24 @@ export default function App() {
       setBacktesting(false);
     }
   }, [symbol]);
+
+  // --- Handy: eigene Ansicht, nicht dasselbe Layout schmalgerechnet -------
+  // Steht VOR allen anderen Rueckgaben: die Ueberwachung soll auch dann
+  // funktionieren, wenn kein Datenbestand vorliegt - der laufende Betrieb ist
+  // davon unabhaengig.
+  const isMobile = useIsMobile();
+  if (isMobile) {
+    return (
+      <div className="app app--mobile">
+        <MobileDashboard
+          status={session}
+          trades={sessionTrades}
+          mode={live.mode}
+          ageSeconds={live.ageSeconds}
+        />
+      </div>
+    );
+  }
 
   // --- Keine Daten vorhanden ----------------------------------------------
   if (!error && symbols.length === 0 && health) {
@@ -421,7 +453,7 @@ export default function App() {
             trades={sessionTrades}
             busy={sessionBusy}
             symbol={symbol}
-            onStart={() => void sessionAction(() => api.sessionStart([symbol]))}
+            onStart={(feed) => void sessionAction(() => api.sessionStart([symbol], { feed }))}
             onHalt={() => void sessionAction(api.sessionHalt)}
             onResume={() => void sessionAction(api.sessionResume)}
             onStop={() => void sessionAction(api.sessionStop)}

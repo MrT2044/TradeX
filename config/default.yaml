@@ -263,6 +263,14 @@ risk:
   max_slippage_ticks: 2
   max_position_size: 5            # harte Obergrenze (Spec §24)
 
+  # Sperrfristen nach einem Trade, in Minuten MARKTZEIT (nicht Wanduhr).
+  # Beide stehen auf 0, also aus. Das ist Absicht: ein Wert ungleich null
+  # aendert das Verhalten der Strategie, und Strategie-Defaults werden hier
+  # nicht ohne Backtest gesetzt. Die Mechanik ist da, die Zahl ist eine
+  # Hypothese, die erst gemessen werden muss.
+  cooldown_minutes_after_trade: 0.0
+  cooldown_minutes_after_loss: 0.0
+
 # ============================================================================
 #  BACKTEST (Phase 4) - Spec §19
 # ============================================================================
@@ -330,9 +338,45 @@ patterns:        # Musterstatistik ueber die Trades eines Backtests
   min_out_of_sample_trades: 10
 
 execution:       # Phase 5/8/9 - Spec §18
-  mode: analysis_only         # analysis_only | paper_manual | paper_auto
+  mode: paper_auto            # analysis_only | paper_manual | paper_auto
                               # | live_manual | live_auto
   live_trading_enabled: false # Spec §24: Live standardmaessig deaktiviert
+
+broker:          # Phase 8 - Orderanbindung an Interactive Brokers (Paper)
+  # AUS bedeutet: es entstehen keine Orders. Signale werden weiterhin intern
+  # durchsimuliert wie bisher, es fliesst nichts und es geht nichts hinaus.
+  enabled: true
+  provider: ibkr
+
+  # Wie alt die Bar hinter einem Signal sein darf, damit daraus noch eine Order
+  # wird - gemessen an der Wanduhr. Ein Signal aus einer Datenluecke wuerde
+  # sonst nachtraeglich ausgefuehrt, sobald der Feed zurueckkommt.
+  max_data_age_seconds: 5.0
+
+  max_orders_per_minute: 6
+  order_timeout_seconds: 30.0
+  reconnect_delays_seconds: [1.0, 2.0, 5.0, 10.0, 30.0]
+
+  ibkr:
+    host: "127.0.0.1"
+    paper_port: 4002            # IB Gateway Paper
+    live_port: 4001             # IB Gateway Live - wird NICHT verwendet
+    client_id: 10
+
+    # Der einzige harte Paper-Nachweis: die TWS-API kennt kein Feld "ist Paper".
+    # Nach dem ersten Lauf von scripts/test_ibkr_connection.py die dort
+    # ausgegebene Kontonummer hier eintragen.
+    allowed_accounts: ["DUR972761"]
+    paper_account_prefixes: ["DU", "DF"]
+
+    require_contract_details: true
+
+    # Stop und Ziel duerfen auch ausserhalb der Kernhandelszeit ausloesen.
+    # Aus waere bei Futures gefaehrlich: die Position laege ueber Nacht ohne
+    # wirksamen Stop im Markt.
+    outside_rth: true
+
+    connect_timeout_seconds: 15.0
 
 news:            # Spec §14/§15 - Sperrfenster um Wirtschaftstermine
   # Der Filter kann nur EINSTIEGE verhindern. Ausstiege bleiben immer moeglich:

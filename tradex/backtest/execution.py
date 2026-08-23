@@ -23,12 +23,14 @@ Jede dieser Annahmen steht in `config/default.yaml` und nicht hier im Code.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Protocol
 
 from tradex.config import BacktestConfig
 from tradex.domain.bars import Bar
-from tradex.domain.enums import Direction, ExitReason
+from tradex.domain.enums import Direction, ExitReason, Timeframe
 from tradex.domain.instruments import Instrument
+from tradex.risk.ledger import RiskLedger
 from tradex.strategy.signal import TradeSignal
 
 
@@ -115,6 +117,95 @@ class SimulatedTrade:
     @property
     def mfe_r(self) -> float:
         return self.mfe_points / self.risk_points if self.risk_points else 0.0
+
+
+def signal_max_age_ns(signal: TradeSignal, grace_ns: int) -> int:
+    """Wie alt ein Signal beim Fuellen hoechstens sein darf.
+
+    Der Timestamp bezeichnet die EROEFFNUNG der Signalbar. Eine 5m-Bar ist
+    also schon fuenf Minuten alt, wenn sie ueberhaupt schliesst - in Basis-Bars
+    gerechnet waere sie damit immer "veraltet". Die Dauer der Signalbar gehoert
+    deshalb dazu, und `grace_ns` (aus `max_signal_age_bars`) ist die Frist
+    DANACH.
+    """
+    return Timeframe.parse(signal.timeframe).seconds * 1_000_000_000 + grace_ns
+
+
+@dataclass(frozen=True, slots=True)
+class ExecutionOrder:
+    """Ein bereits gebuchtes Signal auf dem Weg zur Fuellung.
+
+    Enthaelt alles, was eine Ausfuehrung braucht - und nichts, was mit der
+    Frage zu tun hat, OB gehandelt wird. Diese Entscheidung ist beim Eintreffen
+    hier laengst gefallen: Analyse, Regel, Risikopruefung und Positionsgroesse
+    liegen dahinter, die Position steht bereits im Risikobuch.
+    """
+
+    signal: TradeSignal
+    instrument: Instrument
+    session: str
+    trading_day: int
+    htf_bias: str
+    signal_index: int
+
+
+@dataclass(slots=True)
+class ExecutionUpdate:
+    """Was eine Ausfuehrungsquelle seit dem letzten Aufruf gemeldet hat."""
+
+    closed: list[SimulatedTrade] = field(default_factory=list)
+    """Fertige Trades. Der Aufrufer bucht sie ins Risikobuch."""
+    stale: int = 0
+    """Orders, die ueber einer Datenluecke lagen und verworfen wurden."""
+    unfilled: int = 0
+    """Orders, die nie zustande kamen - Datenende oder Ablehnung des Brokers."""
+
+    def merge(self, other: ExecutionUpdate) -> None:
+        self.closed.extend(other.closed)
+        self.stale += other.stale
+        self.unfilled += other.unfilled
+
+
+class TradeExecutor(Protocol):
+    """Woher die Fuellungen kommen.
+
+    Die EINZIGE Stelle, an der sich der simulierte und der echte Betrieb
+    unterscheiden duerfen. Alles davor - Analyse, Regel, Positionsgroesse,
+    Risikopruefung - ist derselbe Code; genau das macht Spec Paragraph 29
+    ("Backtest = Live") pruefbar statt vereinbart.
+
+    Ein Executor entscheidet nie, OB gehandelt wird. Er darf eine Order
+    ablehnen (kein Broker, kein Kontrakt, keine Verbindung), aber er darf keine
+    erzeugen und keine Regel auslegen.
+    """
+
+    @property
+    def open_count(self) -> int:
+        """Wie viele Positionen dieser Executor gerade fuehrt."""
+        ...
+
+    def place(self, order: ExecutionOrder, bar: Bar, index: int) -> ExecutionUpdate:
+        """Eine gebuchte Order annehmen. `bar` ist die Signalbar."""
+        ...
+
+    def advance(self, bar: Bar, index: int) -> ExecutionUpdate:
+        """Eine Bar anwenden: offene Orders fuellen, laufende Positionen pruefen."""
+        ...
+
+    def poll(self) -> ExecutionUpdate:
+        """Was passiert ist, OHNE dass eine Bar kam.
+
+        Fuer die Simulation immer nichts - dort entsteht ohne Bar nichts, und
+        genau das ist die Aussage. Ein echter Broker meldet dagegen jederzeit:
+        ein Stop kann zwischen zwei Bars ausgeloest werden, und darauf zu
+        warten, bis die naechste Minute schliesst, waere ein erfundener
+        Zeitverzug.
+        """
+        ...
+
+    def finish(self, last_bar: Bar, last_index: int) -> ExecutionUpdate:
+        """Abschluss am Datenende."""
+        ...
 
 
 class OpenTrade:
@@ -340,3 +431,113 @@ class OpenTrade:
             mae_points=max(adverse, 0.0),
             mfe_points=max(favourable, 0.0),
         )
+
+
+class SimulatedExecutor:
+    """Fuellungen aus den Bars selbst - der Weg, den dieses Projekt seit Phase 4
+    geht.
+
+    Erfuellt `TradeExecutor`. Der Inhalt ist unveraendert der frueher direkt in
+    `SymbolBook` stehende Ablauf; er ist hierher gezogen, damit der Echtbetrieb
+    eine ANDERE Quelle einsetzen kann, ohne dass daneben ein zweiter
+    Ausfuehrungspfad entsteht.
+    """
+
+    __slots__ = ("instrument", "params", "ledger", "_grace_ns", "_open", "_pending")
+
+    def __init__(
+        self,
+        instrument: Instrument,
+        params: BacktestConfig,
+        ledger: RiskLedger,
+        grace_ns: int,
+    ) -> None:
+        self.instrument = instrument
+        self.params = params
+        self.ledger = ledger
+        self._grace_ns = grace_ns
+        self._open: list[OpenTrade] = []
+        self._pending: list[OpenTrade] = []
+
+    @property
+    def open_count(self) -> int:
+        return len(self._open)
+
+    def place(self, order: ExecutionOrder, bar: Bar, index: int) -> ExecutionUpdate:
+        trade = OpenTrade(
+            signal=order.signal,
+            params=self.params,
+            instrument=order.instrument,
+            session=order.session,
+            trading_day=order.trading_day,
+            signal_index=order.signal_index,
+            htf_bias=order.htf_bias,
+        )
+        if self.params.entry_fill == "signal_close":
+            # Fuellung auf der Signalbar selbst. Ausdruecklich unrealistisch -
+            # sie existiert nur, um den Preis der Verzoegerung zu messen.
+            trade.fill(bar, index)
+            self._sync_ledger_entry(trade)
+            self._open.append(trade)
+        else:
+            self._pending.append(trade)
+        return ExecutionUpdate()
+
+    def advance(self, bar: Bar, index: int) -> ExecutionUpdate:
+        update = ExecutionUpdate()
+
+        if self._pending:
+            for trade in self._pending:
+                if bar.ts - trade.signal.entry_ts > signal_max_age_ns(
+                    trade.signal, self._grace_ns
+                ):
+                    # Zwischen Signal und Fuellung liegt eine Luecke - die
+                    # Order wird verworfen statt zu einem erfundenen Kurs
+                    # gefuellt.
+                    self.ledger.cancel_position(trade.trade_id, trade.trading_day)
+                    update.stale += 1
+                    continue
+                trade.fill(bar, index)
+                self._sync_ledger_entry(trade)
+                self._open.append(trade)
+            self._pending = []
+
+        if not self._open:
+            return update
+
+        still_open: list[OpenTrade] = []
+        for trade in self._open:
+            finished = trade.on_bar(bar, index)
+            if finished is None:
+                still_open.append(trade)
+                continue
+            update.closed.append(finished)
+        self._open = still_open
+        return update
+
+    def poll(self) -> ExecutionUpdate:
+        """Ohne Bar passiert in der Simulation nichts - das ist keine Luecke,
+        sondern die Definition: gefuellt wird ausschliesslich aus Bars."""
+        return ExecutionUpdate()
+
+    def finish(self, last_bar: Bar, last_index: int) -> ExecutionUpdate:
+        update = ExecutionUpdate()
+        for trade in self._open:
+            update.closed.append(
+                trade.force_close(last_bar, last_index, ExitReason.END_OF_DATA)
+            )
+        self._open = []
+
+        for trade in self._pending:
+            # Nie gefuellt - die Order zaehlt nicht als genommener Trade.
+            self.ledger.cancel_position(trade.trade_id, trade.trading_day)
+            update.unfilled += 1
+        self._pending = []
+        return update
+
+    def _sync_ledger_entry(self, trade: OpenTrade) -> None:
+        """Gebuchten Einstieg auf den tatsaechlichen Fuellkurs nachziehen."""
+        position = self.ledger.position(trade.trade_id)
+        if position is not None:
+            position.entry_price = trade.entry_price
+            position.entry_ts = trade.entry_ts

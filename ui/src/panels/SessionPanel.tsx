@@ -22,7 +22,11 @@ interface Props {
   trades: SimulatedTrade[];
   busy: boolean;
   symbol: string;
-  onStart: () => void;
+  /** Der Feed wird beim Start ausdruecklich gewaehlt und nicht vorbelegt.
+   *  Wiedergabe und Echtzeit sehen im Betrieb fast gleich aus - der
+   *  Unterschied muss beim Klick bewusst sein, nicht erst hinterher im
+   *  Protokoll auffallen. */
+  onStart: (feed: string) => void;
   onHalt: () => void;
   onResume: () => void;
   onStop: () => void;
@@ -150,14 +154,26 @@ export function SessionPanel({
       ) : (
         <>
           <p className="muted">{de.session.idleHint}</p>
-          <button
-            type="button"
-            className="btn"
-            disabled={busy || !symbol}
-            onClick={onStart}
-          >
-            {de.session.start} {symbol && <code>{symbol}</code>}
-          </button>
+          <div className="session-start">
+            <button
+              type="button"
+              className="btn"
+              disabled={busy || !symbol}
+              onClick={() => onStart('replay')}
+            >
+              {de.session.startReplay} {symbol && <code>{symbol}</code>}
+            </button>
+            <button
+              type="button"
+              className="btn btn--live"
+              disabled={busy || !symbol}
+              onClick={() => onStart('nt8')}
+              title={de.session.startLiveHint}
+            >
+              {de.session.startLive} {symbol && <code>{symbol}</code>}
+            </button>
+          </div>
+          <p className="muted">{de.session.startLiveHint}</p>
           {status.stopped_by && (
             <p className="muted">
               {de.session.stoppedBy}: <code>{status.stopped_by}</code>

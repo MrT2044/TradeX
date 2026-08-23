@@ -76,6 +76,8 @@ class RiskLedger:
         self._closed: list[ClosedTrade] = []
         self._current_day: int | None = None
         self._next_trade_id = 1
+        self._last_exit_ts = 0
+        self._last_loss_exit_ts = 0
 
     def next_trade_id(self) -> int:
         """Naechste kontoweit eindeutige Trade-Nummer.
@@ -171,7 +173,23 @@ class RiskLedger:
             r_multiple=r_multiple,
         )
         self._closed.append(trade)
+        # Fuer die Sperrfristen mitgefuehrt statt bei Bedarf gesucht: die Frage
+        # "wann war der letzte Ausstieg?" faellt bei JEDER Risikopruefung an,
+        # die Liste waechst aber ueber den Lauf.
+        self._last_exit_ts = max(self._last_exit_ts, exit_ts)
+        if pnl < 0:
+            self._last_loss_exit_ts = max(self._last_loss_exit_ts, exit_ts)
         return trade
+
+    @property
+    def last_exit_ts(self) -> int:
+        """Zeitpunkt des letzten Ausstiegs. 0 heisst: es gab noch keinen."""
+        return self._last_exit_ts
+
+    @property
+    def last_loss_exit_ts(self) -> int:
+        """Zeitpunkt des letzten VERLUST-Ausstiegs. 0 heisst: keiner."""
+        return self._last_loss_exit_ts
 
     # ------------------------------------------------------------------- Bericht
     def summary(self) -> dict[str, float | int]:

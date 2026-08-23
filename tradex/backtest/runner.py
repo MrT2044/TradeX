@@ -55,10 +55,16 @@ from dataclasses import dataclass, field
 
 from tradex.analysis import reasons as R
 from tradex.analysis.context import MarketContext
-from tradex.backtest.execution import OpenTrade, SimulatedTrade
+from tradex.backtest.execution import (
+    ExecutionOrder,
+    ExecutionUpdate,
+    SimulatedExecutor,
+    SimulatedTrade,
+    TradeExecutor,
+    signal_max_age_ns,
+)
 from tradex.config import Config
 from tradex.domain.bars import Bar, BarSeries
-from tradex.domain.enums import ExitReason, Timeframe
 from tradex.domain.instruments import Instrument
 from tradex.logging_setup import get_logger
 from tradex.news.calendar import NewsCalendar
@@ -118,6 +124,13 @@ class SymbolBook:
 
     Haelt bewusst kein eigenes Risikobuch: das gehoert dem Konto und wird von
     aussen hereingereicht.
+
+    Woher die Fuellungen kommen, ist austauschbar (`executor`). Ohne Angabe ist
+    es die Simulation aus den Bars - der Weg von Backtest und Papertrading.
+    Der Echtbetrieb reicht stattdessen eine Broker-Anbindung herein. Was NICHT
+    austauschbar ist: alles darueber. Analyse, Regel, Positionsgroesse und
+    Risikopruefung laufen in beiden Faellen durch denselben Code, sonst waere
+    die Frage "handelt es so, wie der Backtest sagt?" nicht mehr beantwortbar.
     """
 
     def __init__(
@@ -127,6 +140,7 @@ class SymbolBook:
         config: Config,
         ledger: RiskLedger,
         news: NewsCalendar | None = None,
+        executor: TradeExecutor | None = None,
     ) -> None:
         self.symbol = symbol.upper()
         self.instrument = instrument
@@ -140,11 +154,13 @@ class SymbolBook:
         self.trades: list[SimulatedTrade] = []
         self.unfilled = 0
         self.stale = 0
-        self._open: list[OpenTrade] = []
-        self._pending: list[OpenTrade] = []
-        #: Zusaetzliche Frist ueber die Dauer der Signalbar hinaus - siehe `_max_age_ns`.
+        #: Zusaetzliche Frist ueber die Dauer der Signalbar hinaus - siehe
+        #: `signal_max_age_ns`.
         self._grace_ns = (
             self.params.max_signal_age_bars * config.data.base_timeframe.seconds * 1_000_000_000
+        )
+        self.executor: TradeExecutor = executor or SimulatedExecutor(
+            instrument, self.params, ledger, self._grace_ns
         )
 
     # -------------------------------------------------------------------- Bar
@@ -161,44 +177,27 @@ class SymbolBook:
 
     def finish(self, last_bar: Bar, last_index: int) -> None:
         """Was am Datenende noch laeuft, sauber abschliessen."""
-        for trade in self._open:
-            self._book(trade.force_close(last_bar, last_index, ExitReason.END_OF_DATA))
-        self._open = []
+        self._apply(self.executor.finish(last_bar, last_index))
 
-        for trade in self._pending:
-            # Nie gefuellt - die Order zaehlt nicht als genommener Trade.
-            self.ledger.cancel_position(trade.trade_id, trade.trading_day)
-            self.unfilled += 1
-        self._pending = []
+    def pump(self) -> None:
+        """Rueckmeldungen der Ausfuehrungsquelle einsammeln, ohne dass eine Bar kam.
+
+        Im Backtest folgenlos - dort entsteht ohne Bar nichts. Im Echtbetrieb
+        der Weg, auf dem ein zwischen zwei Bars ausgeloester Stop ankommt.
+        """
+        self._apply(self.executor.poll())
 
     # ------------------------------------------------------------- Positionen
     def _advance(self, bar: Bar, index: int) -> None:
         """Offene Orders fuellen und laufende Positionen gegen diese Bar pruefen."""
-        if self._pending:
-            for trade in self._pending:
-                if self._is_stale(trade, bar):
-                    # Zwischen Signal und Fuellung liegt eine Luecke - die
-                    # Order wird verworfen statt zu einem erfundenen Kurs
-                    # gefuellt.
-                    self.ledger.cancel_position(trade.trade_id, trade.trading_day)
-                    self.stale += 1
-                    continue
-                trade.fill(bar, index)
-                self._sync_ledger_entry(trade)
-                self._open.append(trade)
-            self._pending = []
+        self._apply(self.executor.advance(bar, index))
 
-        if not self._open:
-            return
-
-        still_open: list[OpenTrade] = []
-        for trade in self._open:
-            finished = trade.on_bar(bar, index)
-            if finished is None:
-                still_open.append(trade)
-                continue
-            self._book(finished)
-        self._open = still_open
+    def _apply(self, update: ExecutionUpdate) -> None:
+        """Was die Ausfuehrungsquelle gemeldet hat, ins Konto uebernehmen."""
+        self.stale += update.stale
+        self.unfilled += update.unfilled
+        for trade in update.closed:
+            self._book(trade)
 
     def _place(self, decision: StrategyDecision, bar: Bar, index: int) -> None:
         """Aus einem Signal eine Order fuer die naechste Bar machen."""
@@ -206,7 +205,7 @@ class SymbolBook:
 
         # Ist das Signal schon bei der Ordererteilung veraltet, entstand es vor
         # einer Luecke. Es wird gar nicht erst gebucht.
-        if bar.ts - signal.entry_ts > self._max_age_ns(signal):
+        if bar.ts - signal.entry_ts > signal_max_age_ns(signal, self._grace_ns):
             self.stale += 1
             log.info(
                 "signal_stale",
@@ -218,16 +217,11 @@ class SymbolBook:
             return
 
         session, trading_day, _ = self.context.resolver.resolve(bar.ts)
-        trade = OpenTrade(
-            signal=signal,
-            params=self.params,
-            instrument=self.instrument,
-            session=session,
-            trading_day=trading_day,
-            signal_index=index,
-            htf_bias=decision.htf_bias,
-        )
 
+        # Gebucht wird VOR der Ausfuehrung: zwischen Signal und Fuellung liegt
+        # eine Bar, und in diesem Fenster koennte sonst ein zweites Signal
+        # dieselbe freie Stelle belegen. Kommt die Order nicht zustande, nimmt
+        # die Ausfuehrungsquelle die Buchung zurueck.
         self.ledger.open_position(
             OpenPosition(
                 setup_id=signal.trade_id,
@@ -242,36 +236,20 @@ class SymbolBook:
             trading_day,
         )
 
-        if self.params.entry_fill == "signal_close":
-            # Fuellung auf der Signalbar selbst. Ausdruecklich unrealistisch -
-            # sie existiert nur, um den Preis der Verzoegerung zu messen.
-            trade.fill(bar, index)
-            self._sync_ledger_entry(trade)
-            self._open.append(trade)
-        else:
-            self._pending.append(trade)
-
-    def _max_age_ns(self, signal: TradeSignal) -> int:
-        """Wie alt ein Signal beim Fuellen hoechstens sein darf.
-
-        Der Timestamp bezeichnet die EROEFFNUNG der Signalbar. Eine 5m-Bar ist
-        also schon fuenf Minuten alt, wenn sie ueberhaupt schliesst - in
-        Basis-Bars gerechnet waere sie damit immer "veraltet". Die Dauer der
-        Signalbar gehoert deshalb dazu, und `max_signal_age_bars` ist die
-        Frist DANACH.
-        """
-        return Timeframe.parse(signal.timeframe).seconds * 1_000_000_000 + self._grace_ns
-
-    def _is_stale(self, trade: OpenTrade, bar: Bar) -> bool:
-        """Liegt zwischen Signalbar und dieser Bar mehr als eine Luecke?"""
-        return bar.ts - trade.signal.entry_ts > self._max_age_ns(trade.signal)
-
-    def _sync_ledger_entry(self, trade: OpenTrade) -> None:
-        """Gebuchten Einstieg auf den tatsaechlichen Fuellkurs nachziehen."""
-        position = self.ledger.position(trade.trade_id)
-        if position is not None:
-            position.entry_price = trade.entry_price
-            position.entry_ts = trade.entry_ts
+        self._apply(
+            self.executor.place(
+                ExecutionOrder(
+                    signal=signal,
+                    instrument=self.instrument,
+                    session=session,
+                    trading_day=trading_day,
+                    htf_bias=decision.htf_bias,
+                    signal_index=index,
+                ),
+                bar,
+                index,
+            )
+        )
 
     def _book(self, trade: SimulatedTrade) -> None:
         self.trades.append(trade)

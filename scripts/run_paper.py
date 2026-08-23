@@ -36,9 +36,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tradex.backtest import metrics as M
 from tradex.backtest.execution import SimulatedTrade
+from tradex.backtest.runner import BACKTEST_VERSION
 from tradex.config import get_config, get_instrument, resolved_config_path
 from tradex.domain.bars import from_ns, to_ns
-from tradex.live.manager import SessionRequest, build_feed, build_session
+from tradex.live.manager import SessionRequest, build_broker, build_feed, build_session
 from tradex.live.nt8_feed import DEFAULT_HOST, DEFAULT_PORT
 from tradex.live.runner import SessionRunner
 from tradex.live.session import TradingSession
@@ -176,8 +177,11 @@ def main() -> int:
             # Beides sollte man wissen, bevor man eine neue startet.
             print(f"HINWEIS: {len(offen)} fruehere Sitzung(en) ohne sauberes Ende in der Datenbank.")
 
-    session = build_session(request, config, instruments, feed.name, sessions, events)
-
+    # Die Sitzung wird VOR dem Broker angemeldet: ihre Kennung geht in jeden
+    # `order_key` ein und ist damit der Duplikatschutz ueber Neustarts hinweg
+    # (`RiskLedger` zaehlt im Speicher und beginnt sonst wieder bei 1).
+    # `BACKTEST_VERSION` kommt direkt aus dem Modul statt aus der noch nicht
+    # gebauten Sitzung - es ist derselbe Wert.
     if sessions is not None:
         sessions.start(
             mode=config.execution.mode.value,
@@ -185,10 +189,33 @@ def main() -> int:
             symbols=tuple(symbols),
             config_hash=config_hash,
             strategy_version=STRATEGY_VERSION,
-            backtest_version=session.backtest_version,
+            backtest_version=BACKTEST_VERSION,
             start_equity=config.risk.account_size,
             notes=args.notes,
         )
+
+    # Die Orderanbindung wird ueber DENSELBEN Weg gebaut wie im Serverbetrieb.
+    # Sie hier auszulassen waere die gefaehrlichste Art von Abweichung: das
+    # Skript liefe scheinbar normal, `broker.enabled` stuende auf true, und die
+    # Trades waeren trotzdem alle simuliert - ohne dass irgendetwas danach
+    # aussieht.
+    broker = build_broker(
+        request,
+        config,
+        instruments,
+        session_id=sessions.session_id if sessions is not None else None,
+    )
+    if broker is not None:
+        zustand = broker.state()
+        print(
+            f"  Broker: {zustand.provider} | Konto {zustand.account} "
+            f"({zustand.paper_evidence}) | handelbar: "
+            f"{', '.join(zustand.tradeable_symbols) or 'NICHTS'}"
+        )
+    else:
+        print("  Broker: aus - die Ausfuehrung wird simuliert, es fliesst nichts.")
+
+    session = build_session(request, config, instruments, feed.name, sessions, events, broker)
 
     print("=" * 78)
     print(f"  PAPERTRADING  {'+'.join(symbols)}  -  Feed: {feed.name}")
@@ -209,6 +236,12 @@ def main() -> int:
     result = runner.run(max_bars=args.max_bars)
     sys.stderr.write("\r" + " " * 110 + "\r")
 
+    if broker is not None:
+        # Zuerst der Broker: solange die Verbindung steht, koennen noch
+        # Rueckmeldungen kommen, und die sollen in einer noch offenen
+        # Datenbank landen. Offene Positionen bleiben offen - ihre Stops
+        # liegen als echte Orders beim Broker.
+        broker.close()
     if sessions is not None:
         sessions.finish()
         sessions.close()

@@ -31,11 +31,19 @@ der beiden die gemessene ist.
 from __future__ import annotations
 
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from tradex.backtest.execution import SimulatedTrade
 from tradex.backtest.runner import BACKTEST_VERSION
+from tradex.broker.base import BrokerInterface
+from tradex.broker.env import read_env
+from tradex.broker.executor import BrokerExecutor
+from tradex.broker.guard import check_configuration
+from tradex.broker.journal import TradeJournal
+from tradex.broker.manager import OrderManager
+from tradex.broker.store import BrokerOrderStore
 from tradex.config import Config, resolved_config_path
 from tradex.data.store import BarStore
 from tradex.domain.instruments import Instrument
@@ -43,12 +51,19 @@ from tradex.live.feed import LiveFeed
 from tradex.live.nt8_feed import DEFAULT_HOST, DEFAULT_PORT, NinjaTraderFeed
 from tradex.live.replay_feed import ReplayFeed
 from tradex.live.runner import SessionRunner
-from tradex.live.session import HALT_MANUAL, SessionConfig, SessionStatus, TradingSession
+from tradex.live.session import (
+    HALT_MANUAL,
+    ExecutorFactory,
+    SessionConfig,
+    SessionStatus,
+    TradingSession,
+)
 from tradex.live.store import SessionStore
 from tradex.logging_setup import get_logger
 from tradex.persistence.db import init_database
 from tradex.persistence.decision_log import DecisionLog, utc_now_iso
 from tradex.persistence.models import SystemEvent
+from tradex.risk.ledger import RiskLedger
 
 log = get_logger(__name__)
 
@@ -70,6 +85,32 @@ class SessionRequest:
 
 
 @dataclass(slots=True)
+class BrokerState:
+    """Zustand der Orderanbindung fuer die Anzeige.
+
+    Enthaelt ausschliesslich Werte, die OHNE Rueckfrage beim Broker
+    verfuegbar sind. Ein Statusaufruf der Oberflaeche darf nie auf ein Netz
+    warten muessen - sonst steht die Anzeige genau dann, wenn der Broker
+    klemmt und man am dringendsten hinsehen will.
+    """
+
+    enabled: bool
+    provider: str = ""
+    connected: bool = False
+    account: str = ""
+    is_paper: bool = False
+    paper_evidence: str = ""
+    blocked_reason: str = ""
+    open_orders: int = 0
+    tradeable_symbols: tuple[str, ...] = field(default_factory=tuple)
+
+    @property
+    def ready(self) -> bool:
+        """Duerfte gerade eine Order entstehen?"""
+        return self.enabled and self.connected and self.is_paper and not self.blocked_reason
+
+
+@dataclass(slots=True)
 class ManagerState:
     """Zustand des Managers - auch dann aussagefaehig, wenn nichts laeuft."""
 
@@ -81,6 +122,7 @@ class ManagerState:
     stopped_by: str
     error: str
     warnings: tuple[str, ...] = field(default_factory=tuple)
+    broker: BrokerState = field(default_factory=lambda: BrokerState(enabled=False))
 
 
 def build_feed(
@@ -118,6 +160,138 @@ def build_feed(
     )
 
 
+@dataclass(slots=True)
+class BrokerLink:
+    """Die aufgebaute Broker-Anbindung eines Kontos.
+
+    Haelt Adapter, Order-Manager und Protokoll zusammen, damit die Sitzung nur
+    ein Objekt kennt - und damit es genau eine Stelle gibt, an der die
+    Verbindung wieder abgebaut wird.
+    """
+
+    adapter: BrokerInterface
+    orders: OrderManager
+    journal: TradeJournal
+    store: BrokerOrderStore | None
+    session_id: int | None
+    config: Config
+    symbols: tuple[str, ...] = ()
+    """Die Symbole dieser Sitzung - fuer die Anzeige, welche davon der Broker
+    tatsaechlich handeln kann."""
+
+    def health(self) -> str:
+        """"" wenn gehandelt werden darf, sonst der Grund."""
+        if not self.adapter.is_connected():
+            return "verbindung_verloren"
+        return self.orders.blocked_reason
+
+    def state(self) -> BrokerState:
+        """Momentaufnahme fuer die Anzeige - ohne Rueckfrage beim Broker."""
+        konto = self.orders.account
+        return BrokerState(
+            enabled=True,
+            provider=self.adapter.name,
+            connected=self.adapter.is_connected(),
+            account=konto.account if konto else "",
+            is_paper=bool(konto and konto.is_paper),
+            paper_evidence=konto.paper_evidence if konto else "",
+            blocked_reason=self.orders.blocked_reason,
+            open_orders=len(self.orders.live_orders()),
+            tradeable_symbols=tuple(
+                symbol for symbol in self.symbols if self.adapter.can_trade(symbol)[0]
+            ),
+        )
+
+    def executor_factory(self) -> ExecutorFactory:
+        def make(symbol: str, instrument: Instrument, ledger: RiskLedger) -> BrokerExecutor:
+            return BrokerExecutor(
+                symbol,
+                instrument,
+                self.config,
+                ledger,
+                self.orders,
+                self.adapter,
+                session_id=self.session_id,
+            )
+
+        return make
+
+    def close(self) -> None:
+        """Verbindung abbauen. Offene Positionen bleiben offen - bewusst.
+
+        Ihre Stops und Ziele liegen als echte Orders beim Broker und wirken
+        weiter. Sie beim Trennen glattzustellen waere eine Handelsentscheidung,
+        die niemand getroffen hat.
+        """
+        try:
+            self.adapter.disconnect()
+        finally:
+            if self.store is not None:
+                self.store.close()
+
+
+def build_broker(
+    request: SessionRequest,
+    config: Config,
+    instruments: dict[str, Instrument],
+    session_id: int | None = None,
+    event_sink: Callable[[int, str, str], None] | None = None,
+) -> BrokerLink | None:
+    """Die Orderanbindung aufbauen. None heisst: es wird weiter simuliert.
+
+    Die gesamte Sicherheitskette laeuft VOR dem Verbindungsaufbau: eine
+    Sitzung, die sich anmeldet und danach feststellt, dass sie nicht handeln
+    darf, hat bereits einen Zustand beim Broker erzeugt.
+    """
+    if not config.broker.enabled:
+        return None
+
+    env = read_env(config.execution, config.broker)
+    gate = check_configuration(config.execution, config.broker, env)
+    if not gate.approved:
+        # Kein stilles Zurueckfallen auf die Simulation: wer `broker.enabled`
+        # setzt, will Orders. Sie klaglos durch Papertrades zu ersetzen waere
+        # genau die Verwechslung, die diese ganze Schicht verhindern soll.
+        raise LookupError(
+            f"broker.enabled ist an, aber die Sicherheitskette sperrt: {gate.blocking_code} "
+            f"({gate.blocking_reason.params if gate.blocking_reason else ''})"
+        )
+
+    journal = TradeJournal(
+        broker=config.broker.provider,
+        trading_mode=config.execution.mode.value,
+        event_sink=event_sink,
+        clock=time.time_ns,
+    )
+    traded = {name: instruments[name] for name in request.symbols}
+
+    if config.broker.provider == "ibkr":
+        # Lazy: `ibapi` kommt aus einem Installer und nicht von PyPI. Der
+        # Import gehoert deshalb hinter die Entscheidung, ihn zu brauchen.
+        from tradex.broker.ibkr.adapter import IbkrAdapter
+
+        adapter: BrokerInterface = IbkrAdapter(config, traded, journal=journal, env=env)
+    else:  # pragma: no cover - `provider` ist per Config auf "ibkr" begrenzt
+        raise LookupError(f"Unbekannter Broker {config.broker.provider!r}")
+
+    store: BrokerOrderStore | None = None
+    if request.save:
+        store = BrokerOrderStore(config.path(config.data.database))
+
+    adapter.connect()
+    orders = OrderManager(adapter, config.broker, journal, store, session_id)
+    orders.bind_account(adapter.get_account_info())
+    return BrokerLink(
+        adapter=adapter,
+        orders=orders,
+        journal=journal,
+        store=store,
+        session_id=session_id,
+        config=config,
+        symbols=request.symbols,
+    )
+
+
 def build_session(
     request: SessionRequest,
     config: Config,
@@ -125,6 +299,7 @@ def build_session(
     feed_name: str,
     sink: SessionStore | None,
     events: DecisionLog | None = None,
+    broker: BrokerLink | None = None,
 ) -> TradingSession:
     return TradingSession(
         {name: instruments[name] for name in request.symbols},
@@ -133,6 +308,8 @@ def build_session(
         session_config=SessionConfig(
             trade_sink=sink.record_trade if sink is not None else None,
             event_sink=_event_writer(events, feed_name, request.symbols) if events else None,
+            executor_factory=broker.executor_factory() if broker is not None else None,
+            broker_health=broker.health if broker is not None else None,
         ),
     )
 
@@ -196,6 +373,7 @@ class SessionManager:
         self._runner: SessionRunner | None = None
         self._thread: threading.Thread | None = None
         self._store: SessionStore | None = None
+        self._broker: BrokerLink | None = None
         self._request: SessionRequest | None = None
         self._stopped_by = ""
         self._error = ""
@@ -216,15 +394,33 @@ class SessionManager:
 
             feed = build_feed(request, self.config, self.instruments)
             store = self._open_store(request, feed.name)
-            # Betriebsereignisse landen immer in der Datenbank, auch wenn die
-            # Sitzung selbst nicht archiviert wird: "warum stand der Betrieb?"
-            # ist unabhaengig davon, ob die Trades interessant waren.
+            # Der Broker wird VOR der Sitzung aufgebaut: schlaegt die
+            # Sicherheitskette an, soll gar nichts erst laufen. Die Sitzung
+            # danach abzubrechen hiesse, eine bereits verbundene Anmeldung
+            # wieder aufloesen zu muessen.
+            try:
+                broker = build_broker(
+                    request,
+                    self.config,
+                    self.instruments,
+                    session_id=store.session_id if store is not None else None,
+                    event_sink=_event_writer(self._events, feed.name, request.symbols)
+                    if self._events
+                    else None,
+                )
+            except Exception:
+                if store is not None:
+                    store.finish()
+                    store.close()
+                raise
+
             session = build_session(
-                request, self.config, self.instruments, feed.name, store, self._events
+                request, self.config, self.instruments, feed.name, store, self._events, broker
             )
             runner = SessionRunner(session, feed)
 
             self._session, self._runner, self._store = session, runner, store
+            self._broker = broker
             self._request, self._stopped_by, self._error = request, "", ""
             self._thread = threading.Thread(
                 target=self._run, args=(runner, request.max_bars), name="tradex-session",
@@ -268,6 +464,12 @@ class SessionManager:
             self._stopped_by = "fehler"
             log.exception("sitzung_abgebrochen")
         finally:
+            if self._broker is not None:
+                # Zuerst der Broker: solange die Verbindung steht, koennen
+                # noch Rueckmeldungen kommen, und die sollen in einer noch
+                # offenen Datenbank landen.
+                self._broker.close()
+                self._broker = None
             if self._store is not None:
                 self._store.finish()
                 self._store.close()
@@ -329,6 +531,7 @@ class SessionManager:
         """
         session = self._session
         status = session.status() if session else None
+        broker = self._broker
         return ManagerState(
             active=self.is_running,
             feed=session.feed_name if session else "",
@@ -338,6 +541,9 @@ class SessionManager:
             stopped_by=self._stopped_by,
             error=self._error,
             warnings=self._warnings(session, status),
+            broker=broker.state()
+            if broker is not None
+            else BrokerState(enabled=self.config.broker.enabled),
         )
 
     def _warnings(
@@ -376,4 +582,37 @@ class SessionManager:
             messages.append(
                 "Wiedergabe-Feed: historische Bars. Prueft den Betrieb, nicht den Markt."
             )
+        messages.extend(self._broker_warnings())
         return tuple(messages)
+
+    def _broker_warnings(self) -> list[str]:
+        """Was am Brokerzustand den Zahlen widerspricht.
+
+        Der gefaehrlichste Fall steht zuerst: eine Sitzung, die aussieht, als
+        wuerde sie handeln, deren Orders aber nirgends ankommen.
+        """
+        broker = self._broker
+        if broker is None:
+            if self.config.broker.enabled:
+                messages = [
+                    "broker.enabled ist gesetzt, aber es besteht keine Anbindung - "
+                    "die Trades dieser Sitzung sind simuliert."
+                ]
+                return messages
+            return []
+
+        zustand = broker.state()
+        messages: list[str] = []
+        if not zustand.connected:
+            messages.append("Broker getrennt: es entstehen keine neuen Orders.")
+        elif zustand.blocked_reason:
+            messages.append(f"Broker gesperrt ({zustand.blocked_reason}): keine neuen Orders.")
+        elif not zustand.is_paper:
+            messages.append("Konto NICHT als Paper-Konto belegt - Orderweg gesperrt.")
+        nicht_handelbar = [s for s in broker.symbols if s not in zustand.tradeable_symbols]
+        if nicht_handelbar:
+            messages.append(
+                f"Beim Broker nicht handelbar: {', '.join(nicht_handelbar)} - "
+                "Signale dafuer werden abgelehnt."
+            )
+        return messages

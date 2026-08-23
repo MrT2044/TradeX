@@ -1224,3 +1224,185 @@ pre {
 .neg {
   color: var(--error);
 }
+
+.session-start {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.session-start .btn {
+  flex: 1 1 auto;
+}
+.btn--live {
+  /* Echtzeit ist nicht dasselbe wie Wiedergabe - der Unterschied darf nicht
+     erst im Protokoll auffallen. */
+  border-color: var(--warn);
+  color: var(--warn);
+}
+
+/* ============================================================== Handyansicht
+   Eigenes Layout statt schmalgerechnetem Desktop. Es gibt hier bewusst keine
+   Steuerbefehle: diese Ansicht ist zum Hinsehen da.
+
+   Groessen sind grosszuegig - abgelesen wird sie im Gehen, einhaendig, oft bei
+   Sonnenlicht. Was man nur mit Zusammenkneifen liest, liest man nicht.
+   ========================================================================= */
+.app--mobile {
+  /* env(safe-area-*): Notch und Home-Anzeige aussparen. Ohne das liegt die
+     oberste Zeile unter der Statusleiste des iPhones. */
+  padding: max(12px, env(safe-area-inset-top)) max(10px, env(safe-area-inset-right))
+    max(12px, env(safe-area-inset-bottom)) max(10px, env(safe-area-inset-left));
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 640px;
+  margin: 0 auto;
+}
+
+.mobile__card {
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+}
+.mobile__card--muted {
+  color: var(--text-muted);
+  text-align: center;
+}
+.mobile__card--warn {
+  border-color: var(--warn);
+}
+.mobile__card--stale {
+  /* Der wichtigste Kasten der ganzen Ansicht: veraltete Zahlen, die wie
+     aktuelle aussehen, sind der gefaehrlichste Zustand einer Ueberwachung. */
+  border-color: var(--error);
+  color: var(--error);
+  font-weight: 600;
+}
+
+.mobile__headline {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 1.35rem;
+  font-weight: 600;
+}
+
+.mobile__reason {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.mobile__lamp {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  display: inline-block;
+}
+.mobile__lamp--ok {
+  background: var(--ok);
+}
+.mobile__lamp--warn {
+  background: var(--warn);
+}
+.mobile__lamp--error {
+  background: var(--error);
+}
+
+.mobile__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.mobile__cell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.mobile__label {
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.mobile__value {
+  font-family: var(--font-mono);
+  font-size: 1.25rem;
+  /* Zahlen sollen beim Aktualisieren nicht springen. */
+  font-variant-numeric: tabular-nums;
+}
+.mobile__value--ok {
+  color: var(--ok);
+}
+.mobile__value--error {
+  color: var(--error);
+}
+
+.mobile__row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border);
+}
+.mobile__row:last-child {
+  border-bottom: none;
+}
+
+.mobile__row-label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+}
+
+.mobile__row-value {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.mobile__warning {
+  padding: 5px 0;
+  font-size: 0.9rem;
+  color: var(--warn);
+}
+.mobile__warning + .mobile__warning {
+  border-top: 1px solid var(--border);
+}
+
+.mobile__trade {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9rem;
+}
+.mobile__trade:last-child {
+  border-bottom: none;
+}
+.mobile__trade-symbol {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mobile__trade-side {
+  color: var(--text-muted);
+}

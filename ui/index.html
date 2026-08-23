@@ -2,7 +2,15 @@
 <html lang="de">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- viewport-fit=cover: sonst laesst iOS die Flaeche unter der Notch und
+         der Home-Anzeige leer. Die Ansicht holt sie sich ueber env(safe-area-*)
+         zurueck. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <meta name="theme-color" content="#0d1117" />
+    <!-- Vom Startbildschirm aus ohne Safari-Leisten oeffnen. -->
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="TradeX" />
     <title>TradeX - Nasdaq-100 Analyse</title>
   </head>
   <body>

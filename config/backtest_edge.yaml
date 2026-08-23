@@ -323,9 +323,19 @@ patterns:        # Musterstatistik ueber die Trades eines Backtests
   min_out_of_sample_trades: 10
 
 execution:       # Phase 5/8/9 - Spec §18
-  mode: analysis_only         # analysis_only | paper_manual | paper_auto
+  mode: paper_auto            # analysis_only | paper_manual | paper_auto
                               # | live_manual | live_auto
   live_trading_enabled: false # Spec §24: Live standardmaessig deaktiviert
+
+broker:          # Phase 8 - im Backtest ohne Wirkung, aber siehe unten
+  enabled: true
+  # Diese Datei misst nur; ein Broker wird hier nie gebaut. Der Block steht
+  # trotzdem da, weil test_messkonfiguration_weicht_nur_beim_konto_ab die
+  # beiden Konfigurationen Feld fuer Feld vergleicht - und der Vergleich ist
+  # nur dann eine Aussage, wenn er wirklich alles umfasst. Beim Nachziehen von
+  # default.yaml gehoert der Wert hier mit nachgezogen.
+  ibkr:
+    allowed_accounts: ["DUR972761"]
 
 news:            # Spec §14/§15 - Sperrfenster um Wirtschaftstermine
   enabled: false

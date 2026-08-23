@@ -87,6 +87,13 @@ class SessionRunner:
                         stopped_by = "max_bars"
                         break
 
+                # Broker-Rueckmeldungen kommen unabhaengig von Bars herein:
+                # ein Stop loest aus, wenn er ausloest. Steht kein Broker
+                # dahinter, ist der Aufruf folgenlos.
+                for trade in self.session.pump_broker():
+                    if self.on_trade is not None:
+                        self.on_trade(trade)
+
                 # Auch ohne Nachricht: die Uhr ist der einzige Zeuge dafuer,
                 # dass der Feed noch lebt.
                 self.session.check_liveness()

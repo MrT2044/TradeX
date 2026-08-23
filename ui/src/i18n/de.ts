@@ -123,6 +123,10 @@ export const reasonText: Record<string, (p: ReasonParams) => string> = {
   'risk.max_trades_per_day': (p) => `${p.taken} von ${p.limit} Trades heute bereits genommen`,
   'risk.max_open_positions': (p) => `${p.open} von ${p.limit} Positionen bereits offen`,
   'risk.disabled': () => 'Risikopruefung ist abgeschaltet',
+  'risk.cooldown_after_trade': (p) =>
+    `Sperrfrist nach dem letzten Trade: erst ${num(p.vergangen_minuten, 1)} von ${num(p.sperrfrist_minuten, 0)} Minuten vergangen`,
+  'risk.cooldown_after_loss': (p) =>
+    `Sperrfrist nach Verlust: erst ${num(p.vergangen_minuten, 1)} von ${num(p.sperrfrist_minuten, 0)} Minuten vergangen`,
 
   'window.ok': () => 'Handelsfenster passt',
   'window.session_blocked': (p) =>
@@ -155,6 +159,28 @@ export const reasonText: Record<string, (p: ReasonParams) => string> = {
   'data.gap': (p) => `Luecke in den Daten: ${p.missing_bars} fehlende Bars`,
   'data.roll_boundary': () => 'Kontraktwechsel - Preissprung ist ein Buchungsartefakt',
   'market.closed': () => 'Markt ist geschlossen',
+
+  'broker.disabled': () => 'Orderanbindung ist ausgeschaltet (broker.enabled)',
+  'broker.mode_not_paper': (p) =>
+    `Handelsmodus ${p.mode} erlaubt keine Orders - erwartet wird paper_manual oder paper_auto`,
+  'broker.live_blocked': () =>
+    'Live-Trading ist gesperrt - es wird grundsaetzlich keine Order gesendet',
+  'broker.trading_disabled': (p) =>
+    `Not-Aus der Umgebung aktiv (${p.quelle ?? 'TRADING_ENABLED=false'})`,
+  'broker.port_not_paper': (p) =>
+    `Port ${p.port} ist nicht der Paper-Port ${p.erwartet} - keine Order`,
+  'broker.not_connected': () => 'Keine Verbindung zum IB Gateway - Order wird nicht gesammelt',
+  'broker.account_unconfirmed': (p) =>
+    `Konto ${p.account ?? 'unbekannt'} nicht eindeutig als Paper-Konto bestaetigt`,
+  'broker.contract_unknown': (p) => `Fuer ${p.symbol} ist kein IBKR-Kontrakt hinterlegt`,
+  'broker.contract_ambiguous': (p) =>
+    `Kontrakt fuer ${p.symbol} nicht eindeutig (${p.treffer} Treffer) - es wird nicht geraten`,
+  'broker.data_stale': (p) =>
+    `Kursdaten sind ${num(p.alter_sekunden, 1)}s alt (erlaubt: ${num(p.erlaubt_sekunden, 1)}s)`,
+  'broker.rate_limited': (p) => `Orderfrequenz erreicht (${p.limit} pro Minute)`,
+  'broker.duplicate_signal': (p) => `Signal ${p.order_key} wurde bereits gesendet`,
+  'broker.order_rejected': (p) => `Broker hat abgelehnt: ${p.fehler ?? 'ohne Angabe'}`,
+  'broker.order_failed': (p) => `Order konnte nicht gesendet werden: ${p.fehler ?? 'ohne Angabe'}`,
 };
 
 export function translateReason(code: string, params: ReasonParams): string {
@@ -183,6 +209,8 @@ export const reasonLabel: Record<string, string> = {
   'risk.daily_loss_limit': 'Tagesverlustlimit erreicht',
   'risk.max_trades_per_day': 'Maximale Trades pro Tag erreicht',
   'risk.max_open_positions': 'Maximal offene Positionen erreicht',
+  'risk.cooldown_after_trade': 'Sperrfrist nach dem letzten Trade',
+  'risk.cooldown_after_loss': 'Sperrfrist nach Verlust',
   'window.session_blocked': 'Session nicht freigegeben',
   'window.volatility_low': 'Zu geringe Schwankungsbreite',
   'window.volatility_high': 'Zu hohe Schwankungsbreite',
@@ -190,6 +218,20 @@ export const reasonLabel: Record<string, string> = {
   'news.no_data': 'Keine Termindaten',
   'system.halted': 'Betrieb angehalten',
   'decision.no_trade': 'Setup unvollstaendig',
+  'broker.disabled': 'Orderanbindung ausgeschaltet',
+  'broker.mode_not_paper': 'Handelsmodus erlaubt keine Orders',
+  'broker.live_blocked': 'Live-Trading gesperrt',
+  'broker.trading_disabled': 'Not-Aus der Umgebung aktiv',
+  'broker.port_not_paper': 'Kein Paper-Port',
+  'broker.not_connected': 'Keine Broker-Verbindung',
+  'broker.account_unconfirmed': 'Paper-Konto nicht bestaetigt',
+  'broker.contract_unknown': 'Kein IBKR-Kontrakt hinterlegt',
+  'broker.contract_ambiguous': 'Kontrakt nicht eindeutig',
+  'broker.data_stale': 'Kursdaten zu alt',
+  'broker.rate_limited': 'Orderfrequenz erreicht',
+  'broker.duplicate_signal': 'Signal bereits gesendet',
+  'broker.order_rejected': 'Broker hat abgelehnt',
+  'broker.order_failed': 'Order nicht gesendet',
 };
 
 export function translateReasonLabel(code: string): string {
@@ -386,6 +428,10 @@ export const de = {
     dayPnl: 'Tagesergebnis',
     trades: 'Letzte Trades',
     start: 'Papertrading starten',
+    startReplay: 'Wiedergabe',
+    startLive: 'Echtzeit (NT8)',
+    startLiveHint:
+      'Echtzeit braucht ein laufendes NinjaTrader mit geladenem AddOn. Ist die Bridge nicht da, wartet die Sitzung - sie handelt nicht auf alten Kursen.',
     halt: 'NOT-AUS',
     resume: 'Fortsetzen',
     stop: 'Sitzung beenden',
@@ -394,6 +440,41 @@ export const de = {
       'Der Not-Aus verhindert NEUE Positionen. Offene Positionen laufen weiter zu ihrem Stop - sie ungeschuetzt zu lassen waere gefaehrlicher als die Stoerung.',
     idleHint:
       'Papertrading: echte Entscheidungen, vollstaendig simulierte Ausfuehrung. Es fliesst kein Geld - es gibt keine Broker-Anbindung.',
+  },
+  mobile: {
+    connecting: 'Verbinde mit der Engine ...',
+    offline: 'Keine Verbindung - die Zahlen unten sind veraltet.',
+    // {s} = Sekunden seit der letzten Meldung. Ein Ueberwachungsschirm, der
+    // verschweigt, dass sein Stand alt ist, ist schlimmer als einer, der gar
+    // nichts anzeigt.
+    stale: 'Letzte Meldung vor {s} s - moeglicherweise veraltet.',
+    running: 'Laeuft',
+    halted: 'Angehalten',
+    idle: 'Kein Betrieb',
+    ordersLive: 'Orders gehen an den Broker (Paper).',
+    ordersSimulated: 'Keine Broker-Anbindung - Trades sind simuliert.',
+    equity: 'Konto',
+    dayPnl: 'Heute',
+    totalPnl: 'Gesamt',
+    openPositions: 'Offen',
+    feed: 'Datenfeed',
+    broker: 'Broker',
+    brokerOff: 'aus',
+    disconnected: 'getrennt',
+    openOrders: 'Offene Orders',
+    signals: 'Signale',
+    tradesShort: 'Trades',
+    bars: 'Bars',
+    lastTrades: 'Letzte Trades',
+    noTrades: 'Noch kein Trade abgeschlossen.',
+    haltReasons: {
+      manual: 'Von Hand angehalten (Not-Aus)',
+      not_connected: 'Wartet auf die erste Verbindung',
+      feed_disconnected: 'Datenfeed getrennt',
+      feed_stale: 'Datenfeed schweigt',
+      feed_finished: 'Datenquelle zu Ende',
+      broker_disconnected: 'Broker getrennt',
+    } as Record<string, string>,
   },
   system: {
     title: 'System',

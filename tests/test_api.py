@@ -78,7 +78,14 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> Iterator[TestClient]:
 
 def test_health(client: TestClient):
     body = client.get("/api/health").json()
-    assert body["mode"] == "analysis_only"
+    # Gegen die geladene Konfiguration, nicht gegen einen festen Text: welcher
+    # Modus eingestellt ist, aendert sich im Betrieb (analysis_only ->
+    # paper_auto -> spaeter live). Was sich NICHT aendern darf, ist dass die
+    # Anzeige denselben Modus meldet, unter dem auch entschieden wird - ein
+    # fest verdrahteter Wert haette nur die Auslieferung geprueft, nicht den
+    # Vertrag.
+    erwartet = load_config(PROJECT_ROOT / "config" / "default.yaml")
+    assert body["mode"] == erwartet.execution.mode.value
     assert body["live_trading_enabled"] is False, "Spec 24: Live ist standardmaessig aus"
     assert len(body["config_hash"]) == 16
     assert any(p["name"] == "replay" for p in body["providers"])

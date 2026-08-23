@@ -30,7 +30,7 @@ from tradex.data.provider import ProviderCapabilities, ProviderHealth
 from tradex.data.store import Coverage
 from tradex.domain.bars import Bar, BarSeries
 from tradex.domain.instruments import Instrument
-from tradex.live.manager import ManagerState
+from tradex.live.manager import BrokerState, ManagerState
 from tradex.persistence.models import Reason
 from tradex.strategy.setup import SetupCandidate
 from tradex.strategy.signal import StrategyDecision, TradeSignal
@@ -737,6 +737,12 @@ class EquityPointDto(_Dto):
 class SimulatedTradeDto(_Dto):
     """Ein simulierter Trade - geplant und tatsaechlich gefuellt."""
 
+    trade_id: int
+    """Kontoweit eindeutig. `setup_id` zaehlt je Strategie und taugt deshalb
+    nicht als Schluessel: Kette #5 und Opening-Range #5 waeren derselbe."""
+    symbol: str
+    """Ohne das ist die Trade-Liste einer Sitzung ueber mehrere Instrumente
+    mehrdeutig - man saehe Ergebnisse, ohne zu wissen, wovon."""
     setup_id: int
     strategy: str
     side: str
@@ -764,6 +770,8 @@ class SimulatedTradeDto(_Dto):
     @classmethod
     def of(cls, trade: SimulatedTrade) -> SimulatedTradeDto:
         return cls(
+            trade_id=trade.trade_id,
+            symbol=trade.symbol,
             setup_id=trade.setup_id,
             strategy=trade.strategy,
             side=trade.side,
@@ -890,6 +898,41 @@ class BacktestRunDto(_Dto):
     max_drawdown_pct: float
     notes: str = ""
 
+class BrokerStateDto(_Dto):
+    """Zustand der Orderanbindung.
+
+    `ready` ist die einzige Zahl, auf die es beim Hinsehen ankommt: entstehen
+    aus Signalen gerade echte Orders, oder nicht? Alles andere erklaert nur,
+    warum.
+    """
+
+    enabled: bool
+    provider: str
+    connected: bool
+    account: str
+    is_paper: bool
+    paper_evidence: str
+    blocked_reason: str
+    open_orders: int
+    tradeable_symbols: tuple[str, ...]
+    ready: bool
+
+    @classmethod
+    def of(cls, state: BrokerState) -> BrokerStateDto:
+        return cls(
+            enabled=state.enabled,
+            provider=state.provider,
+            connected=state.connected,
+            account=state.account,
+            is_paper=state.is_paper,
+            paper_evidence=state.paper_evidence,
+            blocked_reason=state.blocked_reason,
+            open_orders=state.open_orders,
+            tradeable_symbols=state.tradeable_symbols,
+            ready=state.ready,
+        )
+
+
 class SessionStatusDto(_Dto):
     """Zustand des laufenden Betriebs (Spec Paragraph 22, Paragraph 24).
 
@@ -923,11 +966,13 @@ class SessionStatusDto(_Dto):
     realized_pnl: float
     day_pnl: float
     trading_day: int
+    broker: BrokerStateDto
 
     @classmethod
     def of(cls, state: ManagerState) -> SessionStatusDto:
         s = state.status
         return cls(
+            broker=BrokerStateDto.of(state.broker),
             active=state.active,
             feed=state.feed,
             symbols=state.symbols,

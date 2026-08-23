@@ -43,7 +43,7 @@ import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 
-from tradex.backtest.execution import SimulatedTrade
+from tradex.backtest.execution import SimulatedTrade, TradeExecutor
 from tradex.backtest.runner import BACKTEST_VERSION, SymbolBook
 from tradex.config import Config
 from tradex.domain.bars import Bar
@@ -60,12 +60,19 @@ Clock = Callable[[], int]
 koennen - eine Sitzung, deren Ueberwachung sich nur in Echtzeit pruefen laesst,
 wird nicht geprueft."""
 
+ExecutorFactory = Callable[[str, Instrument, RiskLedger], TradeExecutor]
+"""(Symbol, Instrument, gemeinsames Risikobuch) -> Fuellquelle."""
+
 #: Gruende, aus denen eine Sitzung keine neuen Positionen mehr aufnimmt.
 HALT_FEED_STALE = "feed_stale"
 HALT_FEED_DISCONNECTED = "feed_disconnected"
 HALT_MANUAL = "manual"
 HALT_FEED_FINISHED = "feed_finished"
 HALT_NOT_CONNECTED = "not_connected"
+HALT_BROKER_DISCONNECTED = "broker_disconnected"
+"""Der Broker ist weg. Nimmt KEINE neuen Positionen mehr auf - fuehrt die
+offenen aber weiter, denn deren Stop und Ziel liegen als echte Orders beim
+Broker und wirken auch dann, wenn dieses Programm nicht zusieht."""
 """Ausgangszustand jeder Sitzung. Sie beginnt angehalten und nimmt erst
 Positionen auf, wenn der Feed sich gemeldet hat - andernfalls koennte sie auf
 Bars handeln, ohne dass je eine Verbindung bestaetigt wurde."""
@@ -142,6 +149,19 @@ class SessionConfig:
     Dieselbe Ueberlegung wie bei `trade_sink`, nur wichtiger: ein Not-Aus um
     drei Uhr nachts oder ein Verbindungsabriss muss auch dann nachvollziehbar
     sein, wenn niemand zugesehen und niemand die Konsole aufgehoben hat."""
+    executor_factory: ExecutorFactory | None = None
+    """Woher die Fuellungen kommen. Ohne Angabe: die Simulation aus den Bars,
+    also exakt der bisherige Betrieb.
+
+    Eine Fabrik und kein fertiges Objekt, weil jedes Symbol seinen eigenen
+    Executor braucht - das Risikobuch dagegen ist gemeinsam, genau wie beim
+    Backtest."""
+    broker_health: Callable[[], str] | None = None
+    """Liefert "" wenn der Broker gesund ist, sonst den Grund.
+
+    Getrennt vom Executor, weil die Frage dem KONTO gilt und nicht einem
+    Symbol: eine abgerissene Broker-Verbindung betrifft alle Buecher
+    gleichzeitig, und die Sitzung soll einmal anhalten und nicht dreimal."""
 
 
 class TradingSession:
@@ -167,9 +187,17 @@ class TradingSession:
         # dieselbe Begruendung wie im Backtest: die Grenzen gelten dem Konto.
         self.ledger = RiskLedger()
         self.news = load_news_calendar(config)
+        factory = self.params.executor_factory
         self.books = {
             name.upper(): _BookState(
-                SymbolBook(name, item, config, self.ledger, news=self.news)
+                SymbolBook(
+                    name,
+                    item,
+                    config,
+                    self.ledger,
+                    news=self.news,
+                    executor=factory(name.upper(), item, self.ledger) if factory else None,
+                )
             )
             for name, item in instruments.items()
         }
@@ -271,6 +299,40 @@ class TradingSession:
             if self.params.trade_sink is not None:
                 self.params.trade_sink(trade)
         return list(fresh)
+
+    # ------------------------------------------------------------------ Broker
+    def pump_broker(self) -> list[SimulatedTrade]:
+        """Broker-Rueckmeldungen abholen, unabhaengig von Bars.
+
+        Warum das nicht am Bar-Takt haengen darf: ein Stop loest aus, wenn er
+        ausloest, nicht zum Minutenschluss. Wuerde erst die naechste Bar den
+        Ausstieg einsammeln, waere die Position bis zu einer Minute lang
+        geschlossen, ohne dass dieses Programm es weiss - und ein zweites
+        Signal koennte in dieser Zeit auf einen Platz zugreifen, den es fuer
+        belegt haelt, oder umgekehrt.
+
+        Ohne Broker ist der Aufruf folgenlos: `SimulatedExecutor.poll()`
+        liefert eine leere Meldung, weil ohne Bar nichts entstehen kann.
+        """
+        health = self.params.broker_health
+        if health is not None:
+            reason = health()
+            if reason and self.halted_reason != HALT_BROKER_DISCONNECTED:
+                # Nicht die Bars abklemmen: die offenen Positionen sollen
+                # weiter beobachtet werden. Nur keine neuen mehr.
+                self._note("halt", f"broker: {reason}")
+                self.halt(HALT_BROKER_DISCONNECTED)
+            elif not reason and self.halted_reason == HALT_BROKER_DISCONNECTED:
+                # Der Broker ist zurueck. Ob daraus wieder gehandelt wird, ist
+                # dieselbe Entscheidung wie beim Feed - und faellt genauso.
+                if self.params.resume_after_silence:
+                    self.resume()
+
+        closed: list[SimulatedTrade] = []
+        for state in self.books.values():
+            state.book.pump()
+            closed.extend(self._collect(state))
+        return closed
 
     # ------------------------------------------------------------------ Not-Aus
     def check_liveness(self) -> None:

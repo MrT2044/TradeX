@@ -71,6 +71,8 @@ RISK_DAILY_LOSS_LIMIT: Final = "risk.daily_loss_limit"
 RISK_MAX_TRADES: Final = "risk.max_trades_per_day"
 RISK_MAX_POSITIONS: Final = "risk.max_open_positions"
 RISK_DISABLED: Final = "risk.disabled"
+RISK_COOLDOWN_AFTER_TRADE: Final = "risk.cooldown_after_trade"
+RISK_COOLDOWN_AFTER_LOSS: Final = "risk.cooldown_after_loss"
 
 # --- Handelsfenster (Spec §13) ----------------------------------------------
 WINDOW_SESSION_BLOCKED: Final = "window.session_blocked"
@@ -98,6 +100,25 @@ MARKET_CLOSED: Final = "market.closed"
 SYSTEM_HALTED: Final = "system.halted"
 """Not-Aus des laufenden Betriebs. Keine neuen Positionen; offene laufen
 weiter zu ihrem Stop."""
+
+# --- Orderanbindung (Spec §24, Phase 8) -------------------------------------
+# Jede Stufe der Sicherheitskette hat ihren EIGENEN Code. Ein gemeinsames
+# "Broker hat abgelehnt" waere im Betrieb wertlos: die Frage am naechsten
+# Morgen lautet nicht ob, sondern woran es lag.
+BROKER_DISABLED: Final = "broker.disabled"
+BROKER_MODE_NOT_PAPER: Final = "broker.mode_not_paper"
+BROKER_LIVE_BLOCKED: Final = "broker.live_blocked"
+BROKER_TRADING_DISABLED: Final = "broker.trading_disabled"
+BROKER_PORT_NOT_PAPER: Final = "broker.port_not_paper"
+BROKER_NOT_CONNECTED: Final = "broker.not_connected"
+BROKER_ACCOUNT_UNCONFIRMED: Final = "broker.account_unconfirmed"
+BROKER_CONTRACT_UNKNOWN: Final = "broker.contract_unknown"
+BROKER_CONTRACT_AMBIGUOUS: Final = "broker.contract_ambiguous"
+BROKER_DATA_STALE: Final = "broker.data_stale"
+BROKER_RATE_LIMITED: Final = "broker.rate_limited"
+BROKER_DUPLICATE_SIGNAL: Final = "broker.duplicate_signal"
+BROKER_ORDER_REJECTED: Final = "broker.order_rejected"
+BROKER_ORDER_FAILED: Final = "broker.order_failed"
 
 #: Alle bekannten Codes - `tests/test_reasons.py` prueft, dass fuer jeden davon
 #: eine deutsche Uebersetzung existiert.
@@ -138,6 +159,8 @@ ALL_CODES: Final[tuple[str, ...]] = (
     RISK_MAX_TRADES,
     RISK_MAX_POSITIONS,
     RISK_DISABLED,
+    RISK_COOLDOWN_AFTER_TRADE,
+    RISK_COOLDOWN_AFTER_LOSS,
     WINDOW_SESSION_BLOCKED,
     WINDOW_VOLATILITY_LOW,
     WINDOW_VOLATILITY_HIGH,
@@ -152,4 +175,18 @@ ALL_CODES: Final[tuple[str, ...]] = (
     DATA_ROLL,
     MARKET_CLOSED,
     SYSTEM_HALTED,
+    BROKER_DISABLED,
+    BROKER_MODE_NOT_PAPER,
+    BROKER_LIVE_BLOCKED,
+    BROKER_TRADING_DISABLED,
+    BROKER_PORT_NOT_PAPER,
+    BROKER_NOT_CONNECTED,
+    BROKER_ACCOUNT_UNCONFIRMED,
+    BROKER_CONTRACT_UNKNOWN,
+    BROKER_CONTRACT_AMBIGUOUS,
+    BROKER_DATA_STALE,
+    BROKER_RATE_LIMITED,
+    BROKER_DUPLICATE_SIGNAL,
+    BROKER_ORDER_REJECTED,
+    BROKER_ORDER_FAILED,
 )

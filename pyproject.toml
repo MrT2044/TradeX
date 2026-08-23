@@ -24,6 +24,18 @@ dependencies = [
 
 [project.optional-dependencies]
 databento = ["databento>=0.34"]
+# ACHTUNG, Herkunft: auf PyPI liegt `ibapi` 9.81.1.post1 - hochgeladen von
+# einem Dritten, nicht von IBKR. Der Inhalt ist IBKRs eigener Quelltext, der
+# Stand ist 2020. Die AKTUELLE Fassung (10.x) gibt es nur ueber den
+# TWS-API-Installer von https://interactivebrokers.github.io/:
+#     .\.venv\Scripts\python.exe -m pip install "C:\TWS API\source\pythonclient"
+#
+# 9.81 genuegt fuer diese Anbindung - der Adapter erkennt die Signaturen zur
+# Laufzeit (`error` ohne errorTime, `cancelOrder` ohne OrderCancel,
+# `eTradeOnly` vorhanden). Wer die neuere Fassung installiert, braucht nichts
+# zu aendern. Importiert wird die Bibliothek ausschliesslich in
+# `tradex/broker/ibkr/`, ein Test haelt die Grenze fest.
+ibkr = ["ibapi>=9.81"]
 dev = [
     "pytest>=8.2",
     "pytest-cov>=5.0",

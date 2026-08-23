@@ -369,6 +369,10 @@ export interface EquityPoint {
 }
 
 export interface SimulatedTrade {
+  /** Kontoweit eindeutig - `setup_id` zaehlt je Strategie und taugt nicht
+   *  als Schluessel. */
+  trade_id: number;
+  symbol: string;
   setup_id: number;
   /** Welche Strategie den Trade vorgeschlagen hat. */
   strategy: string;
@@ -469,7 +473,28 @@ export interface StrategyState {
 }
 
 /** Zustand des laufenden Betriebs (Phase 7, Spec 22/24). */
+/**
+ * Zustand der Orderanbindung.
+ *
+ * `ready` ist die einzige Zahl, auf die es beim Hinsehen ankommt: entstehen
+ * aus Signalen gerade echte Orders, oder nicht? Alles andere erklaert nur,
+ * warum nicht.
+ */
+export interface BrokerState {
+  enabled: boolean;
+  provider: string;
+  connected: boolean;
+  account: string;
+  is_paper: boolean;
+  paper_evidence: string;
+  blocked_reason: string;
+  open_orders: number;
+  tradeable_symbols: string[];
+  ready: boolean;
+}
+
 export interface SessionStatus {
+  broker: BrokerState;
   active: boolean;
   feed: string;
   symbols: string[];

@@ -242,6 +242,52 @@ MIGRATIONS: list[tuple[int, str]] = [
         CREATE INDEX ix_session_trades_session ON session_trades (session_id, entry_ts);
         """,
     ),
+    (
+        4,
+        """
+        -- Orders, die tatsaechlich an einen Broker gegangen sind (Spec §24).
+        --
+        -- Getrennt von `session_trades`: dort steht, was aus einem Signal
+        -- geworden ist, hier steht, was der BROKER daraus gemacht hat. Die
+        -- Differenz zwischen beiden ist die eigentliche Information - ohne sie
+        -- liesse sich nach einem Ausfall nicht sagen, ob eine Position
+        -- existiert oder nur geplant war.
+        --
+        -- `order_key` traegt den Duplikatschutz und ist deshalb UNIQUE: er
+        -- ueberlebt Prozessneustarts, die interne trade_id nicht (das
+        -- Risikobuch liegt im Speicher und faengt wieder bei 1 an).
+        CREATE TABLE broker_orders (
+            id             INTEGER PRIMARY KEY AUTOINCREMENT,
+            order_key      TEXT    NOT NULL UNIQUE,
+            session_id     INTEGER,
+            broker         TEXT    NOT NULL,
+            account        TEXT    NOT NULL,
+            trading_mode   TEXT    NOT NULL,
+            symbol         TEXT    NOT NULL,
+            strategy       TEXT    NOT NULL,
+            signal_id      INTEGER NOT NULL,
+            side           TEXT    NOT NULL,
+            quantity       INTEGER NOT NULL,
+            order_type     TEXT    NOT NULL,
+            order_id       INTEGER NOT NULL DEFAULT 0,
+            parent_order_id INTEGER NOT NULL DEFAULT 0,
+            stop_order_id  INTEGER NOT NULL DEFAULT 0,
+            target_order_id INTEGER NOT NULL DEFAULT 0,
+            state          TEXT    NOT NULL,
+            filled_quantity INTEGER NOT NULL DEFAULT 0,
+            avg_fill_price REAL    NOT NULL DEFAULT 0,
+            planned_entry  REAL    NOT NULL DEFAULT 0,
+            stop_loss      REAL    NOT NULL DEFAULT 0,
+            take_profit    REAL    NOT NULL DEFAULT 0,
+            reason         TEXT    NOT NULL DEFAULT '',
+            error          TEXT    NOT NULL DEFAULT '',
+            submitted_utc  TEXT    NOT NULL,
+            updated_utc    TEXT    NOT NULL
+        );
+        CREATE INDEX ix_broker_orders_session ON broker_orders (session_id, submitted_utc);
+        CREATE INDEX ix_broker_orders_state ON broker_orders (state, updated_utc);
+        """,
+    ),
 ]
 
 CURRENT_SCHEMA_VERSION = MIGRATIONS[-1][0]

@@ -31,6 +31,19 @@ SYMBOL = "MNQ_DEMO"
 BARS = 60 * 24 * 3
 TIMEOUT = 20.0
 
+LAUFEND = 3600.0
+"""Wiedergabegeschwindigkeit fuer Tests, die eine LAUFENDE Sitzung beobachten.
+
+Der Standard `speed=0.0` heisst "so schnell wie moeglich" und spielt die drei
+Tage Bars in etwa einer Sekunde ab. Wer danach abfragt, trifft eine beendete
+Sitzung an - und der Test prueft dann abwechselnd zwei verschiedene Dinge.
+Bei 3600x dauert derselbe Bestand ueber eine Minute, waehrend die hier
+benoetigten 50 bis 100 Bars nach ein bis zwei Sekunden da sind: die Sitzung
+kann waehrend der Beobachtung nicht zu Ende gehen.
+
+Tests, die das ENDE eines Laufs pruefen (Archiv, Betriebsereignisse), behalten
+bewusst `speed=0.0` mit kleiner `max_bars`-Grenze."""
+
 
 def _series(minutes: int) -> BarSeries:
     rng = np.random.default_rng(7)
@@ -119,7 +132,7 @@ def test_ohne_sitzung_ist_der_zustand_trotzdem_aussagefaehig(client: TestClient)
 
 
 def test_start_meldet_den_laufenden_betrieb(client: TestClient):
-    body = start(client)
+    body = start(client, speed=LAUFEND, max_bars=0)
     assert body["active"] is True
     assert body["feed"] == "replay"
     assert body["symbols"] == [SYMBOL]
@@ -162,7 +175,7 @@ def test_unbekanntes_symbol_und_unbekannter_feed(client: TestClient):
 
 # ---------------------------------------------------------------- Kill Switch
 def test_kill_switch_stoppt_neue_positionen_sofort(client: TestClient):
-    start(client)
+    start(client, speed=LAUFEND, max_bars=0)
     wait_until(client, lambda b: b["accepts_entries"])
 
     body = client.post("/api/session/halt").json()
@@ -177,7 +190,7 @@ def test_angehalten_heisst_nicht_abgeschaltet(client: TestClient):
     Wer stattdessen die Bars abklemmt, laesst offene Positionen ohne
     Stopueberwachung zurueck - die gefaehrlichste Reaktion auf eine Stoerung.
     """
-    start(client, max_bars=0)
+    start(client, speed=LAUFEND, max_bars=0)
     wait_until(client, lambda b: b["bars_seen"] > 50)
     client.post("/api/session/halt")
 
@@ -189,7 +202,7 @@ def test_angehalten_heisst_nicht_abgeschaltet(client: TestClient):
 
 
 def test_resume_hebt_den_not_aus_auf(client: TestClient):
-    start(client)
+    start(client, speed=LAUFEND, max_bars=0)
     wait_until(client, lambda b: b["accepts_entries"])
     client.post("/api/session/halt")
     body = client.post("/api/session/resume").json()
@@ -197,7 +210,7 @@ def test_resume_hebt_den_not_aus_auf(client: TestClient):
 
 
 def test_stop_beendet_und_meldet_den_grund(client: TestClient):
-    start(client, max_bars=0)
+    start(client, speed=LAUFEND, max_bars=0)
     wait_until(client, lambda b: b["bars_seen"] > 50)
     body = client.post("/api/session/stop").json()
 

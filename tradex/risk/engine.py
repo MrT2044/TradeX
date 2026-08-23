@@ -151,7 +151,7 @@ class RiskEngine:
         return collected
 
     # ------------------------------------------------------------------ Grenzen
-    def check_limits(self, trading_day: int, pending: int = 0) -> list[Reason]:
+    def check_limits(self, trading_day: int, pending: int = 0, ts: int = 0) -> list[Reason]:
         """Harte Sperren pruefen.
 
         `pending` sind Trades, die auf DERSELBEN Bar bereits genehmigt wurden,
@@ -203,6 +203,48 @@ class RiskEngine:
                 {"open": open_count, "limit": params.max_open_positions, "pending": pending},
             )
         )
+
+        collected.extend(self._check_cooldown(ts))
+        return collected
+
+    def _check_cooldown(self, ts: int) -> list[Reason]:
+        """Sperrfrist nach einem Trade (Spec Paragraph 24).
+
+        `ts` ist MARKTZEIT, nicht Wanduhr. Mit der Wanduhr zu rechnen waere der
+        naheliegende Fehler: im Backtest vergehen zwischen zwei Bars
+        Mikrosekunden, die Sperre griffe dort nie und im Echtbetrieb immer -
+        und damit waeren die beiden nicht mehr vergleichbar (Invariante 3).
+
+        `ts == 0` heisst "Zeit unbekannt" und laesst die Pruefung aus. Das ist
+        hier zulaessig, weil die Sperre eine Zusatzbedingung ist und keine
+        Sicherheitsgrenze: sie kann einen erlaubten Trade verhindern, aber ihr
+        Ausfall erlaubt keinen verbotenen.
+        """
+        params = self.config.risk
+        if ts <= 0:
+            return []
+
+        collected: list[Reason] = []
+        for minuten, letzter, code in (
+            (params.cooldown_minutes_after_loss, self.ledger.last_loss_exit_ts,
+             reasons.RISK_COOLDOWN_AFTER_LOSS),
+            (params.cooldown_minutes_after_trade, self.ledger.last_exit_ts,
+             reasons.RISK_COOLDOWN_AFTER_TRADE),
+        ):
+            if minuten <= 0 or letzter <= 0:
+                continue
+            vergangen = (ts - letzter) / 60e9
+            if vergangen < minuten:
+                collected.append(
+                    Reason(
+                        code,
+                        False,
+                        {
+                            "vergangen_minuten": round(vergangen, 1),
+                            "sperrfrist_minuten": minuten,
+                        },
+                    )
+                )
         return collected
 
     # ----------------------------------------------------------------- Gesamturteil
@@ -217,7 +259,7 @@ class RiskEngine:
     ) -> RiskAssessment:
         collected: list[Reason] = []
 
-        collected.extend(self.check_limits(trading_day, pending))
+        collected.extend(self.check_limits(trading_day, pending, ts))
         if any(not r.ok for r in collected):
             return RiskAssessment(False, None, tuple(collected))
 

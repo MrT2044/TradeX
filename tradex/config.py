@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from tradex.domain.enums import SessionName, Timeframe, TradingMode
 from tradex.domain.instruments import (
     DailyBreak,
+    IbkrContract,
     Instrument,
     SessionWindow,
     TradingHours,
@@ -294,6 +295,18 @@ class RiskConfig(_Frozen):
     max_slippage_ticks: float = Field(default=2, ge=0)
     max_position_size: int = Field(default=5, ge=1)
 
+    #: Sperrfrist nach JEDEM geschlossenen Trade, in Minuten Marktzeit. 0 = aus.
+    #: Gemessen an der Bar-Zeit und nicht an der Wanduhr - sonst waere die
+    #: Sperre im Backtest wirkungslos und im Live-Betrieb wirksam, und beide
+    #: waeren nicht mehr vergleichbar (Invariante 3).
+    cooldown_minutes_after_trade: float = Field(default=0.0, ge=0)
+
+    #: Zusaetzliche, laengere Sperrfrist nach einem VERLUST. 0 = aus.
+    #: Bewusst getrennt: nach einem Stop ist die Marktlage haeufig genau die,
+    #: die den Stop ausgeloest hat - der naechste Vorschlag entsteht dann aus
+    #: demselben Geschehen.
+    cooldown_minutes_after_loss: float = Field(default=0.0, ge=0)
+
     @property
     def risk_per_trade_amount(self) -> float:
         return self.account_size * self.risk_per_trade_pct / 100.0
@@ -392,6 +405,94 @@ class ExecutionConfig(_Frozen):
         return self
 
 
+class IbkrConfig(_Frozen):
+    """Verbindungsdaten fuer IB Gateway.
+
+    `paper_port` und `live_port` stehen beide hier, damit der Unterschied
+    sichtbar ist - der Adapter waehlt aber niemals `live_port`, solange nicht
+    `execution.mode` ein Live-Modus UND `execution.live_trading_enabled` gesetzt
+    ist. Der Port allein ist ohnehin kein Beweis fuer ein Paper-Konto; er ist
+    nur die erste von mehreren Pruefungen.
+    """
+
+    host: str = "127.0.0.1"
+    paper_port: int = Field(default=4002, ge=1, le=65535)
+    live_port: int = Field(default=4001, ge=1, le=65535)
+    client_id: int = Field(default=10, ge=0)
+
+    #: Kontonummern, die ausdruecklich erlaubt sind. Das ist der EINZIGE harte
+    #: Paper-Nachweis, den die TWS-API zulaesst - sie kennt kein Feld "ist
+    #: Paper". Leer bedeutet: das Praefix unten muss passen.
+    allowed_accounts: tuple[str, ...] = ()
+
+    #: Fallback, wenn `allowed_accounts` leer ist. "DU" ist IBKRs feste
+    #: Konvention fuer Einzel-Paper-Konten, "DF" fuer Advisor-Paper. Es gibt
+    #: dafuer keine dokumentierte API-Zusicherung, deshalb ist die Allowlist
+    #: die belastbarere Einstellung.
+    paper_account_prefixes: tuple[str, ...] = ("DU", "DF")
+
+    #: Jeden Kontrakt vor dem Handel ueber `reqContractDetails` aufloesen.
+    #: Ausschalten heisst raten - und ein falsch geratener Future ist ein
+    #: stiller Fehler, der erst in der Abrechnung auffaellt.
+    require_contract_details: bool = True
+
+    #: Duerfen Stop und Ziel ausserhalb der Kernhandelszeit ausloesen? Bei
+    #: Futures laeuft der Handel fast rund um die Uhr; ein Stop, der um 23 Uhr
+    #: nicht ausloest, ist kein Stop. Steht trotzdem hier und nicht als
+    #: Konstante im Adapter - wer es abschaltet, soll es sehen koennen.
+    outside_rth: bool = True
+
+    connect_timeout_seconds: float = Field(default=15.0, gt=0)
+
+    @model_validator(mode="after")
+    def _ports_differ(self) -> IbkrConfig:
+        if self.paper_port == self.live_port:
+            raise ValueError(
+                "broker.ibkr.paper_port und live_port duerfen nicht gleich sein - "
+                "sonst laesst sich Paper nicht von Live unterscheiden"
+            )
+        return self
+
+
+class BrokerConfig(_Frozen):
+    """Orderanbindung (Spec Paragraph 24, Phase 8).
+
+    Standardmaessig AUS. Der Betrieb ohne Broker ist der bisherige: Signale
+    werden intern durchsimuliert und es fliesst nichts. Erst `enabled: true`
+    laesst ueberhaupt Orders entstehen - und auch dann noch muss die gesamte
+    Pruefkette in `tradex/broker/guard.py` zustimmen.
+    """
+
+    enabled: bool = False
+    provider: Literal["ibkr"] = "ibkr"
+
+    #: Wie alt die Bar sein darf, aus der ein Signal stammt, damit daraus noch
+    #: eine Order werden kann - Wanduhrzeit, nicht Bar-Abstand. Steht bewusst
+    #: hier und nicht unter `risk:`: das Risikomodell teilt sich der Backtest,
+    #: und dort ist Wanduhrzeit bedeutungslos.
+    max_data_age_seconds: float = Field(default=5.0, gt=0)
+
+    max_orders_per_minute: int = Field(default=6, ge=1)
+
+    #: Wie lange eine gesendete Order ohne Rueckmeldung des Brokers gelten darf,
+    #: bevor sie als verloren gilt.
+    order_timeout_seconds: float = Field(default=30.0, gt=0)
+
+    #: Wartezeiten zwischen Wiederverbindungsversuchen. Der letzte Wert wird
+    #: danach wiederholt.
+    reconnect_delays_seconds: tuple[float, ...] = (1.0, 2.0, 5.0, 10.0, 30.0)
+
+    ibkr: IbkrConfig = IbkrConfig()
+
+    @model_validator(mode="after")
+    def _reconnect_delays_are_positive(self) -> BrokerConfig:
+        if not self.reconnect_delays_seconds:
+            raise ValueError("broker.reconnect_delays_seconds darf nicht leer sein")
+        if any(delay <= 0 for delay in self.reconnect_delays_seconds):
+            raise ValueError("broker.reconnect_delays_seconds muessen alle > 0 sein")
+        return self
+
+
 class NewsConfig(_Frozen):
     """Spec Paragraph 14/15: Sperrfenster um Wirtschaftstermine.
 
@@ -452,6 +553,7 @@ class Config(_Frozen):
     backtest: BacktestConfig = BacktestConfig()
     patterns: PatternsConfig = PatternsConfig()
     execution: ExecutionConfig = ExecutionConfig()
+    broker: BrokerConfig = BrokerConfig()
     news: NewsConfig = NewsConfig()
 
     @model_validator(mode="after")
@@ -542,6 +644,28 @@ def _parse_time(raw: str) -> time:
     return time(int(hours), int(minutes))
 
 
+def _build_ibkr_contract(spec: dict[str, Any], defaults: dict[str, Any]) -> IbkrContract | None:
+    """Den IBKR-Kontrakt aus dem Instrumenteintrag lesen.
+
+    Fehlt der Block, ist das Instrument bei IBKR nicht handelbar - das ist ein
+    gueltiger Zustand (Proxy- und Demodaten haben dort keinen Gegenpart) und
+    wird spaeter als Ablehnung gemeldet, nicht als Fehler beim Laden.
+    """
+    raw = spec.get("ibkr")
+    if not raw:
+        return None
+    return IbkrContract(
+        symbol=str(raw.get("symbol", "")),
+        sec_type=str(raw.get("sec_type", "FUT")),
+        exchange=str(raw.get("exchange", "")),
+        currency=str(raw.get("currency", defaults.get("currency", "USD"))),
+        expiry=str(raw.get("expiry", "")),
+        multiplier=str(raw.get("multiplier", "")),
+        local_symbol=str(raw.get("local_symbol", "")),
+        trading_class=str(raw.get("trading_class", "")),
+    )
+
+
 def _build_instrument(symbol: str, spec: dict[str, Any], defaults: dict[str, Any]) -> Instrument:
     # Handelszeiten und Sessions duerfen je Instrument ueberschrieben werden.
     # Noetig, weil nicht jedes Instrument den CME-Zeiten folgt: der
@@ -574,6 +698,7 @@ def _build_instrument(symbol: str, spec: dict[str, Any], defaults: dict[str, Any
         databento_continuous=spec["databento_continuous"],
         dukascopy_symbol=spec.get("dukascopy_symbol", ""),
         nt8_symbol=spec.get("nt8_symbol", ""),
+        ibkr=_build_ibkr_contract(spec, defaults),
         contract_months=tuple(defaults["contract_months"]),
         trading_hours=TradingHours(
             week_open=WeekBoundary(
