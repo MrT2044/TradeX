@@ -220,6 +220,18 @@ schmalgerechneter Desktop, und enthält **keine Steuerbefehle**. Statusabfragen
 dürfen **nie** blockierende Broker-Aufrufe machen (`get_open_orders()` wartet
 auf Antwort) — sonst steht die Anzeige, wenn der Broker klemmt.
 
+**Chart:** Woher die Bars kommen, entscheidet `TradexService.chart_context()`
+— **läuft eine Sitzung für das Symbol, gilt deren Analysezustand**, sonst der
+geladene Wiedergabe-Zustand. Die Auswahl gehört in den Service, nicht in die
+API-Schicht: sonst trifft sie jeder Endpunkt einzeln und der erste, der es
+vergisst, zeigt im Betrieb alte Kurse. Gelesen wird ohne Sperre (dieselbe
+Begründung wie `state()`); ungefährlich, weil `BarSeries` erst **nach** dem
+Schreiben hochzählt. Die Historie umfasst 30.000 Bars und wird **vollständig**
+analysiert — ein Chart, der weiter reicht als die Analyse, zeigt Kerzen ohne
+die Muster, die dort liegen. Der volle Bestand wären ~105 s je Symbolwechsel;
+für längere Zeiträume ist der Backtest da. `/load` nimmt 400.000 Bars, `/step`
+nur 100.000 je Anfrage — `client.ts` teilt selbst auf.
+
 **Testkonventionen:** Handgebaute Fixtures statt Zufallsdaten. Wächter-Tests
 gegen leere Wahrheit. **Nie gegen den Auslieferungszustand der Konfiguration
 prüfen** — vier Tests behaupteten `analysis_only`/`broker.enabled: false` als
