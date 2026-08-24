@@ -124,6 +124,9 @@ class ManagerState:
     error: str
     warnings: tuple[str, ...] = field(default_factory=tuple)
     broker: BrokerState = field(default_factory=lambda: BrokerState(enabled=False))
+    last_prices: dict[str, float] = field(default_factory=dict)
+    """Zuletzt gehandelte Kurse je Symbol - nur zur Anzeige, nie fuer eine
+    Entscheidung. Leer, wenn der Feed keine Ticks liefert."""
 
 
 def build_feed(
@@ -142,6 +145,8 @@ def build_feed(
             host=request.host,
             port=request.port,
             contracts=contracts,
+            history_days=config.live.nt8_history_days,
+            history_timeout_seconds=config.live.nt8_history_timeout_seconds,
         )
     if request.feed != "replay":
         known = "replay, nt8"
@@ -371,6 +376,7 @@ class SessionManager:
         self._events = events
         self._lock = threading.Lock()
         self._session: TradingSession | None = None
+        self._feed: LiveFeed | None = None
         self._runner: SessionRunner | None = None
         self._thread: threading.Thread | None = None
         self._store: SessionStore | None = None
@@ -421,6 +427,7 @@ class SessionManager:
             runner = SessionRunner(session, feed)
 
             self._session, self._runner, self._store = session, runner, store
+            self._feed = feed
             self._broker = broker
             self._request, self._stopped_by, self._error = request, "", ""
             self._thread = threading.Thread(
@@ -540,6 +547,18 @@ class SessionManager:
         state = session.books.get(symbol.upper())
         return state.book.context if state is not None else None
 
+    def last_prices(self) -> dict[str, float]:
+        """Zuletzt gehandelte Kurse aus dem Feed - nur zur Anzeige.
+
+        Nicht jeder Feed hat sie (die Wiedergabe kennt keine Ticks), deshalb
+        wird gefragt statt vorausgesetzt. Diese Zahlen gehen in keine
+        Entscheidung ein; sie fuellen die Luecke zwischen zwei Bar-Schluessen,
+        in der ein Chart sonst stillsteht, obwohl sich der Markt bewegt.
+        """
+        feed = self._feed
+        preise = getattr(feed, "last_price", None) if feed is not None else None
+        return dict(preise) if isinstance(preise, dict) else {}
+
     def trades(self, limit: int = 100) -> tuple[SimulatedTrade, ...]:
         session = self._session
         return tuple(session.trades[-limit:]) if session else ()
@@ -567,6 +586,7 @@ class SessionManager:
             broker=broker.state()
             if broker is not None
             else BrokerState(enabled=self.config.broker.enabled),
+            last_prices=self.last_prices(),
         )
 
     def _warnings(

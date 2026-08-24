@@ -342,6 +342,14 @@ execution:       # Phase 5/8/9 - Spec §18
                               # | live_manual | live_auto
   live_trading_enabled: false # Spec §24: Live standardmaessig deaktiviert
 
+live:            # Phase 5/8 - Betriebsparameter, keine Handelsregeln
+  # Beim Start einer NT8-Sitzung wird Historie aus NinjaTrader nachgeladen,
+  # damit der Chart nicht leer anfaengt. Fuer MNQ/NQ liegt lokal nichts - die
+  # Bars kommen live. Drei Tage ordnen den laufenden Kurs ein, ohne dass der
+  # Start lange braucht. 0 schaltet das Nachladen ab.
+  nt8_history_days: 3
+  nt8_history_timeout_seconds: 30.0
+
 broker:          # Phase 8 - Orderanbindung an Interactive Brokers (Paper)
   # AUS bedeutet: es entstehen keine Orders. Signale werden weiterhin intern
   # durchsimuliert wie bisher, es fliesst nichts und es geht nichts hinaus.

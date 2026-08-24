@@ -327,6 +327,10 @@ execution:       # Phase 5/8/9 - Spec §18
                               # | live_manual | live_auto
   live_trading_enabled: false # Spec §24: Live standardmaessig deaktiviert
 
+live:            # im Backtest ohne Wirkung - siehe Begruendung bei broker:
+  nt8_history_days: 3
+  nt8_history_timeout_seconds: 30.0
+
 broker:          # Phase 8 - im Backtest ohne Wirkung, aber siehe unten
   enabled: true
   # Diese Datei misst nur; ein Broker wird hier nie gebaut. Der Block steht

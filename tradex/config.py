@@ -454,6 +454,26 @@ class IbkrConfig(_Frozen):
         return self
 
 
+class LiveConfig(_Frozen):
+    """Betriebsparameter des Livebetriebs - keine Handelsregeln.
+
+    Steht getrennt von `backtest:`, weil nichts davon im Backtest existiert:
+    Wanduhrzeit, Verbindungen, Wartezeiten. Ein Backtest, der diese Werte
+    laese, waere von der Tagesform der Maschine abhaengig.
+    """
+
+    #: Wie viele Tage Historie beim Start einer NT8-Sitzung aus NinjaTrader
+    #: nachgeladen werden. Zur Einordnung des laufenden Kurses - der Chart
+    #: faengt sonst leer an und man sieht tagelang nicht, wo man steht. Null
+    #: schaltet das Nachladen ab.
+    nt8_history_days: int = Field(default=3, ge=0, le=30)
+
+    #: Wie lange auf `history_end` gewartet wird, bevor die Sitzung ohne
+    #: Historie weiterlaeuft. Ohne Deckel haengt der Betrieb an einem AddOn,
+    #: das den Befehl vielleicht gar nicht kennt - und handelt nie.
+    nt8_history_timeout_seconds: float = Field(default=30.0, gt=0)
+
+
 class BrokerConfig(_Frozen):
     """Orderanbindung (Spec Paragraph 24, Phase 8).
 
@@ -553,6 +573,7 @@ class Config(_Frozen):
     backtest: BacktestConfig = BacktestConfig()
     patterns: PatternsConfig = PatternsConfig()
     execution: ExecutionConfig = ExecutionConfig()
+    live: LiveConfig = LiveConfig()
     broker: BrokerConfig = BrokerConfig()
     news: NewsConfig = NewsConfig()
 

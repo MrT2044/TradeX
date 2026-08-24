@@ -503,6 +503,10 @@ export interface SessionStatus {
   stopped_by: string;
   error: string;
 
+  /** Zuletzt gehandelter Kurs je Symbol - nur zur Anzeige, nie fuer eine
+   *  Entscheidung. Leer, wenn der Feed keine Ticks liefert (Wiedergabe). */
+  last_prices: Record<string, number>;
+
   running: boolean;
   connected: boolean;
   halted_reason: string;

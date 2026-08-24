@@ -324,6 +324,97 @@ def test_ticks_werden_gezaehlt_aber_nicht_analysiert(bridge: BridgeServer):
     assert feed.ticks_seen == 3
 
 
+def test_der_letzte_tickkurs_wird_gemerkt(bridge: BridgeServer):
+    """Zur Anzeige zwischen zwei Bar-Schluessen - nicht zur Analyse.
+
+    Ein Chart, der eine Minute lang stillsteht, waehrend sich der Markt
+    bewegt, sieht eingefroren aus. Der Kurs geht in keinen Detektor ein; das
+    prueft der Test daneben, indem er auf BarMessages besteht.
+    """
+    feed = NinjaTraderFeed(("MNQ",), port=bridge.port)
+    feed.start()
+    bridge.wait_for_client()
+    bridge.send({"type": "tick", "symbol": "MNQ", "ts": 1, "price": 29433.25, "size": 2})
+
+    ende = time.monotonic() + TIMEOUT
+    while not feed.last_price and time.monotonic() < ende:
+        collect(feed, 1, seconds=0.2)
+    feed.stop()
+
+    assert feed.last_price["MNQ"] == 29433.25
+
+
+# ------------------------------------------------------------------ Historie
+def test_historie_wird_angefordert_und_gilt_nicht_als_verbunden(bridge: BridgeServer):
+    """Der gefaehrlichste Fehler waere, auf der Historie zu handeln.
+
+    Die Sitzung beginnt angehalten und nimmt Positionen erst auf, wenn sie
+    "verbunden" gesehen hat. Meldete der Feed das schon beim Socket-Aufbau,
+    liefe die gesamte nachgeladene Historie durch eine handelsbereite Sitzung
+    - drei Tage alte Bars wuerden echte Orders ausloesen. Die Meldung kommt
+    deshalb erst nach `history_end`.
+    """
+    feed = NinjaTraderFeed(("MNQ",), port=bridge.port, history_days=3)
+    feed.start()
+    bridge.wait_for_client()
+
+    ende = time.monotonic() + TIMEOUT
+    while len(bridge.received) < 2 and time.monotonic() < ende:
+        time.sleep(0.05)
+
+    angefordert = [m for m in bridge.received if m["type"] == "history"]
+    assert angefordert, "es wurde gar keine Historie angefordert"
+    assert angefordert[0]["symbol"] == "MNQ"
+    assert angefordert[0]["to"] > angefordert[0]["from"]
+
+    # Waehrend die Historie laeuft: Bars ja, "verbunden" nein.
+    bridge.send(bar_message(1_740_000_000_000_000_000))
+    waehrend = collect(feed, 1, seconds=1.0)
+    feed_stop_spaeter = [m for m in waehrend if isinstance(m, StatusMessage)]
+    assert not feed_stop_spaeter, "verbunden gemeldet, waehrend die Historie noch laeuft"
+    assert [m for m in waehrend if isinstance(m, BarMessage)], "die Bar kam nicht durch"
+
+    bridge.send({"type": "history_end", "symbol": "MNQ", "bars": 1})
+    danach = collect(feed, 1, seconds=TIMEOUT)
+    feed.stop()
+
+    status = [m for m in danach if isinstance(m, StatusMessage)]
+    assert status and status[0].connected, "nach history_end fehlt die Verbindungsmeldung"
+    assert feed.history_bars == 1
+
+
+def test_ohne_antwort_laeuft_der_betrieb_trotzdem_an(bridge: BridgeServer):
+    """Ein AddOn, das `history` nicht kennt, antwortet nie.
+
+    Ohne Deckel bliebe die Sitzung fuer immer angehalten - sie bekaeme Bars,
+    analysierte sie und naehme nie eine Position auf. Von aussen sieht das aus
+    wie ein Markt ohne Signale, und niemand sucht dann nach einem Fehler.
+    """
+    feed = NinjaTraderFeed(
+        ("MNQ",), port=bridge.port, history_days=3, history_timeout_seconds=0.3
+    )
+    feed.start()
+    bridge.wait_for_client()
+
+    status = [m for m in collect(feed, 1, seconds=TIMEOUT) if isinstance(m, StatusMessage)]
+    feed.stop()
+
+    assert status and status[0].connected
+    assert "ohne Historie" in status[0].detail, "der Notausgang muss im Protokoll stehen"
+
+
+def test_ohne_historie_meldet_der_feed_sofort(bridge: BridgeServer):
+    """Waechter zur Gegenprobe: die Verzoegerung gilt NUR mit history_days."""
+    feed = NinjaTraderFeed(("MNQ",), port=bridge.port, history_days=0)
+    feed.start()
+    bridge.wait_for_client()
+    status = [m for m in collect(feed, 1) if isinstance(m, StatusMessage)]
+    feed.stop()
+
+    assert status and status[0].connected
+    assert "ohne Historie" not in status[0].detail
+
+
 def test_abbruch_der_gegenstelle_wird_gemeldet(bridge: BridgeServer):
     feed = NinjaTraderFeed(("MNQ",), port=bridge.port)
     feed.start()

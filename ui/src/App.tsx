@@ -525,7 +525,20 @@ export default function App() {
               toggles={toggles}
               priceDecimals={instrument?.price_decimals ?? 2}
             />
-            {liveActive && <div className="chart-live">{de.chart.live}</div>}
+            {liveActive && (
+              <div className="chart-live">
+                {de.chart.live}
+                {/* Der laufende Kurs aus den Ticks. Er steht neben der Marke
+                    und nicht im Chart: gezeichnet wird auf geschlossenen
+                    Bars, und eine Linie, die zwischen den Kerzen zappelt,
+                    liesse offen, was davon ausgewertet wurde. */}
+                {typeof session?.last_prices?.[symbol] === 'number' && (
+                  <span className="chart-live__price">
+                    {session.last_prices[symbol].toFixed(instrument?.price_decimals ?? 2)}
+                  </span>
+                )}
+              </div>
+            )}
             {!symbol && (
               <div className="chart-loading">
                 <div className="chart-loading__text">{de.chart.chooseSymbol}</div>

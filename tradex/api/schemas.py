@@ -966,6 +966,13 @@ class SessionStatusDto(_Dto):
     realized_pnl: float
     day_pnl: float
     trading_day: int
+    last_prices: dict[str, float]
+    """Zuletzt gehandelte Kurse je Symbol - AUSSCHLIESSLICH zur Anzeige.
+
+    Kommt aus den Ticks des Feeds und geht in keine Entscheidung ein
+    (Invariante 1: analysiert wird nur auf geschlossenen Bars). Ohne diesen
+    Wert steht die Anzeige zwischen zwei Minutenschluessen still, obwohl sich
+    der Markt bewegt - und das sieht aus wie ein toter Feed."""
     broker: BrokerStateDto
 
     @classmethod
@@ -997,6 +1004,7 @@ class SessionStatusDto(_Dto):
             realized_pnl=s.realized_pnl if s else 0.0,
             day_pnl=s.day_pnl if s else 0.0,
             trading_day=s.trading_day if s else 0,
+            last_prices=dict(state.last_prices),
         )
 
 

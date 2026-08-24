@@ -77,6 +77,8 @@ class NinjaTraderFeed:
         host: str = DEFAULT_HOST,
         port: int = DEFAULT_PORT,
         contracts: dict[str, str] | None = None,
+        history_days: int = 0,
+        history_timeout_seconds: float = 30.0,
     ) -> None:
         if not symbols:
             raise ValueError("Ein Feed ohne Symbole abonniert nichts")
@@ -92,6 +94,9 @@ class NinjaTraderFeed:
         self.host = host
         self.port = port
 
+        self.history_days = max(0, history_days)
+        self.history_timeout_seconds = history_timeout_seconds
+
         self._queue: Queue[FeedMessage] = Queue()
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -99,6 +104,17 @@ class NinjaTraderFeed:
         self.ticks_seen = 0
         self.malformed = 0
         self.reconnects = 0
+        self.history_bars = 0
+        #: Symbole, deren Historie noch laeuft. Solange hier etwas steht, gilt
+        #: die Verbindung nach aussen als NICHT hergestellt - siehe
+        #: `_publish_status`.
+        self._history_pending: set[str] = set()
+        self._history_deadline = 0.0
+        self.last_price: dict[str, float] = {}
+        """Zuletzt gehandelter Kurs je Symbol, aus den Ticks. AUSSCHLIESSLICH
+        zur Anzeige: er geht in keinen Detektor und in keine Entscheidung ein.
+        Ohne ihn steht der Chart zwischen zwei Bar-Schluessen eine Minute lang
+        still, obwohl sich der Markt bewegt."""
 
     # ------------------------------------------------------------------- Lauf
     def start(self) -> None:
@@ -132,8 +148,17 @@ class NinjaTraderFeed:
             try:
                 with socket.create_connection((self.host, self.port), timeout=_SOCKET_TIMEOUT) as sock:
                     attempt = 0
-                    self._publish_status(True, f"{self.host}:{self.port}")
                     self._subscribe(sock)
+                    # Reihenfolge mit Bedacht: erst Historie anfordern, DANN
+                    # den Verbindungszustand melden. Die Sitzung beginnt
+                    # angehalten und nimmt erst Positionen auf, wenn sie
+                    # "verbunden" gesehen hat - meldeten wir das zuerst,
+                    # handelte sie auf drei Tage alten Bars, waehrend die
+                    # Historie durchlaeuft. `_request_history` schiebt die
+                    # Meldung bis `history_end` auf.
+                    self._request_history(sock)
+                    if not self._history_pending:
+                        self._publish_status(True, f"{self.host}:{self.port}")
                     self._read_loop(sock)
             except OSError as error:
                 self._publish_status(False, str(error))
@@ -154,6 +179,48 @@ class NinjaTraderFeed:
             }
             sock.sendall((json.dumps(payload) + "\n").encode("utf-8"))
 
+    def _request_history(self, sock: socket.socket) -> None:
+        """Die letzten Tage aus NinjaTraders lokalem Bestand nachfordern.
+
+        Fuer die echten Futures (MNQ, NQ) liegt auf der Platte nichts - deren
+        Bars kommen live. Ohne Historie faengt der Chart bei null an und man
+        sieht tagelang nicht, wo der laufende Kurs eigentlich steht.
+
+        Die Bars kommen als gewoehnliche `bar`-Nachrichten zurueck und laufen
+        durch denselben Weg wie Livebars. Das ist Absicht und kein Zufall: die
+        Sitzung soll keinen zweiten Bar-Pfad kennen (Invariante 3).
+        """
+        self._history_pending = set()
+        if self.history_days <= 0:
+            return
+        bis = time.time_ns()
+        von = bis - self.history_days * 86_400 * 1_000_000_000
+        for symbol in self.symbols:
+            payload = {
+                "type": "history",
+                "symbol": self.contracts.get(symbol, symbol),
+                "timeframe": self.timeframe.value,
+                "from": von,
+                "to": bis,
+            }
+            sock.sendall((json.dumps(payload) + "\n").encode("utf-8"))
+            self._history_pending.add(symbol)
+        self._history_deadline = time.monotonic() + self.history_timeout_seconds
+        log.info("nt8_historie_angefordert", tage=self.history_days, symbole=list(self.symbols))
+
+    def _history_timed_out(self) -> None:
+        """Ohne Antwort trotzdem weitermachen - aber es sagen.
+
+        Ein AddOn, das den `history`-Befehl nicht kennt, antwortet nie. Ohne
+        Deckel bliebe die Sitzung fuer immer angehalten: sie bekaeme Bars,
+        wuerde sie analysieren und nie eine Position aufnehmen - und das saehe
+        von aussen aus wie ein Markt ohne Signale.
+        """
+        offen = sorted(self._history_pending)
+        self._history_pending.clear()
+        log.warning("nt8_historie_ohne_antwort", offen=offen, sekunden=self.history_timeout_seconds)
+        self._publish_status(True, f"{self.host}:{self.port} (ohne Historie)")
+
     def _read_loop(self, sock: socket.socket) -> None:
         buffer = b""
         while not self._stop.is_set():
@@ -162,6 +229,8 @@ class NinjaTraderFeed:
             except TimeoutError:
                 # Kein Datenverkehr ist kein Fehler - ob es einer wird,
                 # entscheidet die Stille-Ueberwachung der Sitzung.
+                if self._history_pending and time.monotonic() > self._history_deadline:
+                    self._history_timed_out()
                 continue
             if not chunk:
                 self._publish_status(False, "Gegenstelle hat geschlossen")
@@ -193,9 +262,39 @@ class NinjaTraderFeed:
                 bool(message.get("connected", False)), str(message.get("detail", ""))
             )
         elif kind == "tick":
-            self.ticks_seen += 1
+            self._handle_tick(message)
+        elif kind == "history_end":
+            self._handle_history_end(message)
         else:
             self.malformed += 1
+
+    def _handle_history_end(self, message: dict[str, object]) -> None:
+        gemeldet = str(message.get("symbol", "")).upper()
+        symbol = self._back.get(gemeldet, gemeldet)
+        self._history_pending.discard(symbol)
+        log.info("nt8_historie_fertig", symbol=symbol, bars=self.history_bars)
+        if not self._history_pending:
+            # Erst jetzt gilt die Verbindung als hergestellt: ab hier sind die
+            # Bars aktuell, und die Sitzung darf Positionen aufnehmen.
+            self._publish_status(True, f"{self.host}:{self.port}")
+
+    def _handle_tick(self, message: dict[str, object]) -> None:
+        """Nur den letzten Kurs merken - nichts davon geht in die Analyse.
+
+        Die Engine wertet ausschliesslich geschlossene Bars aus (Invariante 1).
+        Ein Tick, der irgendwo einfloesse, waere ein Zustand, den der Backtest
+        nie sieht. Angezeigt werden darf er trotzdem: zwischen zwei
+        Minutenschluessen bewegt sich der Markt, und ein Chart, der das
+        verschweigt, sieht eingefroren aus.
+        """
+        self.ticks_seen += 1
+        try:
+            gemeldet = str(message["symbol"]).upper()
+            preis = float(message["price"])  # type: ignore[arg-type]
+        except (KeyError, TypeError, ValueError):
+            self.malformed += 1
+            return
+        self.last_price[self._back.get(gemeldet, gemeldet)] = preis
 
     def _handle_bar(self, message: dict[str, object]) -> None:
         try:
@@ -222,6 +321,8 @@ class NinjaTraderFeed:
             self.malformed += 1
             return
 
+        if self._history_pending:
+            self.history_bars += 1
         self._queue.put(BarMessage(symbol=symbol, bar=bar, received_ts=time.time_ns()))
 
     def _is_roll(self, symbol: str, contract: object) -> bool:
