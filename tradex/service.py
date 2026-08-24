@@ -34,6 +34,8 @@ from tradex.domain.bars import Bar, BarSeries
 from tradex.domain.enums import Timeframe, TradingMode
 from tradex.domain.instruments import Instrument
 from tradex.live.manager import SessionManager
+from tradex.live.nt8_feed import DEFAULT_HOST, DEFAULT_PORT
+from tradex.live.nt8_history import HistoryResult, fetch_history
 from tradex.live.store import SessionStore
 from tradex.logging_setup import get_logger
 from tradex.persistence.db import init_database
@@ -293,6 +295,51 @@ class TradexService:
     # ------------------------------------------------------------------ Abfragen
     def snapshot(self, symbol: str, max_items: int = 50) -> ContextSnapshot:
         return self.state(symbol).context.snapshot(max_items)
+
+    # -------------------------------------------------------------- Historie
+    def import_nt8_history(
+        self, symbol: str, days: int = 0, host: str = "", port: int = 0
+    ) -> HistoryResult:
+        """Historie aus NinjaTrader nachladen und ablegen.
+
+        Bewusst OHNE Sitzung: eine Sitzung zu starten heisst, den Handel
+        scharfzuschalten, und wer nur sehen will wo der Kurs steht, sollte
+        dafuer nicht handeln muessen.
+
+        Laeuft eine Sitzung, wird abgelehnt statt eine zweite Verbindung zur
+        Bridge aufzumachen. Zwei Clients am selben AddOn sind kein Fehler, den
+        man beim Zusehen bemerkt - aber der Betrieb ist wichtiger als die
+        Bequemlichkeit, und im Zweifel hat er Vorrang.
+        """
+        if self.sessions.is_running:
+            raise LookupError(
+                "Waehrend einer laufenden Sitzung wird keine Historie nachgeladen - "
+                "die Sitzung holt sie beim Start selbst."
+            )
+        symbol = symbol.upper()
+        instrument = get_instruments().get(symbol)
+        if instrument is None:
+            raise LookupError(f"Unbekanntes Instrument {symbol}")
+        if not instrument.nt8_symbol:
+            raise LookupError(
+                f"Fuer {symbol} ist kein nt8_symbol hinterlegt - NinjaTrader kennt es nicht."
+            )
+
+        series, result = fetch_history(
+            symbol,
+            self.config.data.base_timeframe,
+            days=days or self.config.live.nt8_history_days,
+            host=host or DEFAULT_HOST,
+            port=port or DEFAULT_PORT,
+            contract=instrument.nt8_symbol,
+            timeout_seconds=self.config.live.nt8_history_timeout_seconds,
+        )
+        if len(series):
+            # `write` ersetzt nach Zeitstempel und ist idempotent - zweimal
+            # abholen aendert nichts, und ein abgebrochener Abruf laesst sich
+            # einfach wiederholen.
+            self.store.write(symbol, self.config.data.base_timeframe, series)
+        return result
 
     def chart_context(self, symbol: str) -> MarketContext:
         """Woher der Chart seine Bars nimmt.

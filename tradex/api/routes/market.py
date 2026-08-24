@@ -57,6 +57,55 @@ def load(request: LoadRequest) -> LoadResponse:
     )
 
 
+class HistoryRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str
+    days: int = Field(default=0, ge=0, le=30)
+    """0 nimmt den Wert aus `live.nt8_history_days`."""
+    host: str = ""
+    port: int = Field(default=0, ge=0, le=65535)
+
+
+class HistoryResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str
+    bars: int
+    first_ts: int
+    last_ts: int
+    complete: bool
+    """False heisst: der Abruf wurde nicht sauber beendet. Die Bars koennen
+    trotzdem brauchbar sein - aber der Betrachter muss den Unterschied sehen."""
+    detail: str
+
+
+@router.post("/history/nt8")
+def import_nt8_history(request: HistoryRequest) -> HistoryResponse:
+    """Historie aus NinjaTrader nachladen - ohne den Handel scharfzuschalten.
+
+    Fuer MNQ und NQ liegt lokal nichts. Bisher blieb der Chart deshalb leer,
+    bis jemand eine Sitzung startete - und das heisst, den Handel zu
+    aktivieren. Zwischen "ich will sehen, wo der Kurs steht" und "ab jetzt darf
+    gehandelt werden" liegt aber alles.
+    """
+    service = get_service()
+    try:
+        result = service.import_nt8_history(
+            request.symbol, days=request.days, host=request.host, port=request.port
+        )
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return HistoryResponse(
+        symbol=result.symbol,
+        bars=result.bars,
+        first_ts=result.first_ts,
+        last_ts=result.last_ts,
+        complete=result.complete,
+        detail=result.detail,
+    )
+
+
 @router.get("/bars")
 def bars(
     symbol: str,

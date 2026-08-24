@@ -415,6 +415,63 @@ def test_ohne_historie_meldet_der_feed_sofort(bridge: BridgeServer):
     assert "ohne Historie" not in status[0].detail
 
 
+# --------------------------------------------------- Historie ohne Sitzung
+def test_historie_laesst_sich_ohne_sitzung_abholen(bridge: BridgeServer):
+    """Sehen zu wollen ist kein Grund, den Handel scharfzuschalten.
+
+    Vorher blieb der Chart fuer MNQ leer, bis jemand eine Sitzung startete -
+    und eine Sitzung zu starten heisst, dass ab dann echte Orders entstehen
+    koennen. Zwischen "wo steht der Kurs" und "ab jetzt darf gehandelt werden"
+    liegt aber alles.
+    """
+    from tradex.live.nt8_history import fetch_history
+
+    def antworten() -> None:
+        bridge.wait_for_client()
+        for i in range(3):
+            bridge.send(bar_message(1_740_000_000_000_000_000 + i * 60_000_000_000))
+        bridge.send({"type": "history_end", "symbol": "MNQ", "bars": 3})
+
+    faden = threading.Thread(target=antworten, daemon=True)
+    faden.start()
+
+    series, ergebnis = fetch_history(
+        "MNQ", Timeframe.M1, days=3, port=bridge.port, timeout_seconds=TIMEOUT
+    )
+    faden.join(timeout=TIMEOUT)
+
+    assert len(series) == 3
+    assert ergebnis.bars == 3
+    assert ergebnis.complete, "history_end kam, also muss der Abruf als vollstaendig gelten"
+    assert ergebnis.first_ts < ergebnis.last_ts
+
+    angefordert = [m for m in bridge.received if m["type"] == "history"]
+    assert angefordert, "es wurde keine Historie angefordert"
+
+
+def test_abgebrochene_historie_gilt_nicht_als_vollstaendig():
+    """Ein halber Bestand, der wie ein ganzer aussieht, ist schlimmer als keiner.
+
+    Ohne Gegenstelle darf der Abruf nicht ewig warten - der Nutzer steht davor
+    und wartet auf eine Antwort, waehrend der Feed von sich aus endlos weiter
+    zu verbinden versuchte.
+    """
+    from tradex.live.nt8_history import fetch_history
+
+    frei = socket.socket()
+    frei.bind(("127.0.0.1", 0))
+    port = frei.getsockname()[1]
+    frei.close()
+
+    series, ergebnis = fetch_history(
+        "MNQ", Timeframe.M1, days=3, port=port, timeout_seconds=2.0
+    )
+
+    assert len(series) == 0
+    assert not ergebnis.complete
+    assert ergebnis.detail, "der Grund muss dranstehen, sonst raet man"
+
+
 def test_abbruch_der_gegenstelle_wird_gemeldet(bridge: BridgeServer):
     feed = NinjaTraderFeed(("MNQ",), port=bridge.port)
     feed.start()

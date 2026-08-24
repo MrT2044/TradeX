@@ -91,6 +91,9 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   /** Fortschritt des Warmlaufs - null, wenn gerade keiner laeuft. */
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
+  /** Zaehler, um den Ladevorgang erneut anzustossen, ohne das Symbol zu
+   *  wechseln - etwa nachdem Historie nachgeladen wurde. */
+  const [reload, setReload] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const [session, setSession] = useState<SessionStatus | null>(null);
@@ -248,7 +251,7 @@ export default function App() {
     // timeframe bewusst NICHT in den Abhaengigkeiten: ein Wechsel der Zeitebene
     // darf die laufende Analyse nicht neu starten.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [symbol, refreshView]);
+  }, [symbol, reload, refreshView]);
 
   // --- Zeitebene wechseln: nur die Ansicht neu holen -----------------------
   useEffect(() => {
@@ -400,6 +403,38 @@ export default function App() {
     };
   }, [liveActive, symbol, timeframe]);
 
+  /** Historie aus NinjaTrader nachladen und danach ganz normal analysieren.
+   *
+   *  Der Abruf schreibt nur in den Speicher. Analysiert wird anschliessend auf
+   *  dem gewoehnlichen Weg - `setSymbol` allein reicht dafuer nicht, das Symbol
+   *  ist ja schon gewaehlt, deshalb wird die Abdeckung neu geholt und der
+   *  Ladevorgang ueber `reload` angestossen.
+   */
+  const importHistory = useCallback(async () => {
+    if (!symbol) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const result = await api.importNt8History(symbol);
+      if (result.bars === 0) {
+        setError(de.chart.importEmpty(result.detail));
+        return;
+      }
+      if (!result.complete) {
+        // Kein Abbruch: die Bars sind da und brauchbar. Aber verschweigen
+        // waere falsch - ein halber Bestand, der wie ein ganzer aussieht, ist
+        // schlimmer als gar keiner.
+        setError(de.chart.importPartial(result.bars, result.detail));
+      }
+      setCoverage(await api.coverage());
+      setReload((n) => n + 1);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  }, [symbol]);
+
   const handleReset = useCallback(async () => {
     if (!symbol) return;
     setPlaying(false);
@@ -461,6 +496,7 @@ export default function App() {
           coverage={[]}
           symbols={[]}
           withData={new Set()}
+          liveFeed=""
           selected=""
           onSelect={() => undefined}
           busy={false}
@@ -485,6 +521,7 @@ export default function App() {
         coverage={coverage}
         symbols={symbols}
         withData={symbolsWithData}
+        liveFeed={session?.active ? session.feed : ''}
         selected={symbol}
         onSelect={setSymbol}
         busy={busy}
@@ -564,6 +601,14 @@ export default function App() {
             {symbol && !symbolsWithData.has(symbol) && !liveActive && !busy && (
               <div className="chart-loading">
                 <div className="chart-loading__text">{de.chart.liveOnlyHint}</div>
+                <button
+                  type="button"
+                  className="chip"
+                  onClick={() => void importHistory()}
+                  disabled={busy}
+                >
+                  {de.chart.importHistory}
+                </button>
               </div>
             )}
             {progress && (
@@ -581,18 +626,24 @@ export default function App() {
             )}
           </div>
 
-          <ReplayControls
-            cursor={cursor}
-            total={total}
-            playing={playing}
-            busy={busy}
-            stepSize={stepSize}
-            onStepSize={setStepSize}
-            onStep={() => void advance(stepSize)}
-            onPlayPause={() => setPlaying((value) => !value)}
-            onReset={() => void handleReset()}
-            onToEnd={() => void advance(total - cursor)}
-          />
+          {/* Im Echtzeitbetrieb gibt es nichts vor- oder zurueckzuspulen: die
+              Bars entstehen gerade erst. Die Leiste stehenzulassen waere nicht
+              nur ueberfluessig, sondern irrefuehrend - sie suggeriert, man
+              koenne im laufenden Markt an eine andere Stelle springen. */}
+          {!liveActive && (
+            <ReplayControls
+              cursor={cursor}
+              total={total}
+              playing={playing}
+              busy={busy}
+              stepSize={stepSize}
+              onStepSize={setStepSize}
+              onStep={() => void advance(stepSize)}
+              onPlayPause={() => setPlaying((value) => !value)}
+              onReset={() => void handleReset()}
+              onToEnd={() => void advance(total - cursor)}
+            />
+          )}
         </div>
 
         <aside className="layout__side">

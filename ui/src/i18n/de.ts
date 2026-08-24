@@ -282,6 +282,14 @@ export const de = {
     forming: 'laufende Bar',
     live: 'ECHTZEIT',
     chooseSymbol: 'Oben ein Instrument waehlen',
+    importHistory: 'Historie aus NinjaTrader laden',
+    importEmpty: (detail: string) =>
+      `NinjaTrader hat keine Bars geliefert${detail ? ` (${detail})` : ''}. ` +
+      'Laeuft NT8 mit geladenem AddOn, und ist der Kontrakt im Chart offen?',
+    importPartial: (bars: number, detail: string) =>
+      `Nur ${bars.toLocaleString('de-DE')} Bars uebertragen, der Abruf wurde nicht ` +
+      `sauber beendet${detail ? ` (${detail})` : ''}. Die Daten sind brauchbar, ` +
+      'aber moeglicherweise unvollstaendig.',
     liveOnlyHint:
       'Keine gespeicherte Historie - die Bars dieses Kontrakts kommen live. ' +
       'Unten eine Sitzung mit "Echtzeit (NT8)" starten; die letzten Tage ' +

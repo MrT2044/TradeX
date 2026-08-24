@@ -7,6 +7,7 @@ import type {
   ContextSnapshot,
   Coverage,
   Health,
+  HistoryResponse,
   Instrument,
   LoadResponse,
   LogEntry,
@@ -151,6 +152,14 @@ export const api = {
     }
     return antwort;
   },
+
+  /** Historie aus NinjaTrader nachladen. Dauert Sekunden - Aufrufer muss die
+   *  Oberflaeche als beschaeftigt markieren. */
+  importNt8History: (symbol: string, days = 0) =>
+    request<HistoryResponse>('/history/nt8', {
+      method: 'POST',
+      body: JSON.stringify({ symbol, days }),
+    }),
 
   reset: (symbol: string) =>
     request<StepResponse>(`/reset?symbol=${encodeURIComponent(symbol)}`, { method: 'POST' }),

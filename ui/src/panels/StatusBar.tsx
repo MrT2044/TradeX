@@ -11,6 +11,8 @@ interface Props {
   symbols: string[];
   /** Welche Symbole gespeicherte Historie haben. */
   withData: Set<string>;
+  /** Name des Feeds einer laufenden Sitzung, sonst leer. */
+  liveFeed: string;
   selected: string;
   onSelect: (symbol: string) => void;
   busy: boolean;
@@ -23,6 +25,7 @@ export function StatusBar({
   coverage,
   symbols,
   withData,
+  liveFeed,
   selected,
   onSelect,
   busy,
@@ -87,8 +90,16 @@ export function StatusBar({
           </span>
         </Item>
 
+        {/* Laeuft eine Sitzung, ist DEREN Feed die Datenquelle - nicht die
+            Liste der registrierten Provider. Die aendert sich nie und stand
+            deshalb auch waehrend eines NT8-Betriebs auf "replay": eine Anzeige,
+            die im Echtbetrieb die Wiedergabe meldet, ist schlimmer als keine. */}
         <Item label={de.status.dataFeed}>
-          {health?.providers.map((p) => p.name).join(', ') || '-'}
+          {liveFeed ? (
+            <span className="pill pill--ok">{liveFeed}</span>
+          ) : (
+            health?.providers.map((p) => p.name).join(', ') || '-'
+          )}
         </Item>
 
         <Item label={de.status.bars}>{barCount ? barCount.toLocaleString('de-DE') : '-'}</Item>

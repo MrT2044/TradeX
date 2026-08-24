@@ -493,6 +493,17 @@ export interface BrokerState {
   ready: boolean;
 }
 
+export interface HistoryResponse {
+  symbol: string;
+  bars: number;
+  first_ts: number;
+  last_ts: number;
+  /** False: der Abruf wurde nicht sauber beendet - die Bars koennen trotzdem
+   *  brauchbar sein, aber der Unterschied muss sichtbar bleiben. */
+  complete: boolean;
+  detail: string;
+}
+
 export interface SessionStatus {
   broker: BrokerState;
   active: boolean;
