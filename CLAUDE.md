@@ -34,7 +34,7 @@ PowerShell**, für Dateien die Datei-Tools (Read/Write/Edit) statt
 Shell-Textmanipulation.
 
 ```powershell
-.\.venv\Scripts\python.exe -m pytest tests/ -q      # Tests (525, alle grün)
+.\.venv\Scripts\python.exe -m pytest tests/ -q      # Tests (536, alle grün)
 .\.venv\Scripts\python.exe -m ruff check tradex tests scripts
 cd ui ; npm run typecheck
 ```
@@ -154,7 +154,9 @@ sperren, nie freischalten) · `guard.py` (Sicherheitskette, reine Funktionen)
 4**) · `manager.py` (`OrderManager`, Duplikatschutz, Ratenlimit) ·
 `executor.py` (`BrokerExecutor`, baut `SimulatedTrade` aus echten Fills).
 
-**Config:** `BrokerConfig`/`IbkrConfig` in `config.py`, Section `broker:` in
+**Config:** `LiveConfig` (Section `live:`, Betriebsparameter ohne Backtest-
+Entsprechung — `nt8_history_days`/`_timeout_seconds`) ·
+`BrokerConfig`/`IbkrConfig` in `config.py`, Section `broker:` in
 `default.yaml` (Default `enabled: false`). `IbkrContract` in
 `domain/instruments.py`, `ibkr:`-Block bei MNQ/NQ in `instruments.yaml`
 (`expiry` beim Roll nachziehen, wie `nt8_symbol`).
@@ -312,7 +314,8 @@ tradex/news/      events/store(JSONL)/calendar/providers (nur Abrufskript)
 tradex/risk/      Sizing, Tagesgrenzen, Konsistenzprüfung, Risikobuch (ledger.py)
 tradex/backtest/  execution (TradeExecutor+SimulatedExecutor), runner (SymbolBook+
                   Backtester), metrics/significance/patterns/report/store
-tradex/live/      feed/replay_feed/nt8_feed/session/runner/store/manager (Kill Switch)
+tradex/live/      feed/replay_feed/nt8_feed/session/runner/store/manager (Kill Switch),
+                  watch.py (Beobachtung ohne Handel), nt8_history.py (Historienabruf)
 tradex/broker/    Phase 8, siehe oben; ibkr/ = contracts/orders/adapter,
                   einziger Ort mit ibapi
 tradex/api/       FastAPI + DTOs = einziger UI-Vertrag; routes/stream.py = SSE
