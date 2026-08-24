@@ -8,6 +8,7 @@ import type {
   Coverage,
   Health,
   HistoryResponse,
+  WatchState,
   Instrument,
   LoadResponse,
   LogEntry,
@@ -160,6 +161,18 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ symbol, days }),
     }),
+
+  /** Zustand der Marktbeobachtung samt letztem Kurs. Bewusst schlank - die
+   *  Oberflaeche fragt das mehrmals je Sekunde ab. */
+  watch: () => request<WatchState>('/watch'),
+
+  watchStart: (symbol: string) =>
+    request<WatchState>('/watch/start', {
+      method: 'POST',
+      body: JSON.stringify({ symbol }),
+    }),
+
+  watchStop: () => request<WatchState>('/watch/stop', { method: 'POST' }),
 
   reset: (symbol: string) =>
     request<StepResponse>(`/reset?symbol=${encodeURIComponent(symbol)}`, { method: 'POST' }),

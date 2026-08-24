@@ -37,6 +37,7 @@ from tradex.live.manager import SessionManager
 from tradex.live.nt8_feed import DEFAULT_HOST, DEFAULT_PORT
 from tradex.live.nt8_history import HistoryResult, fetch_history
 from tradex.live.store import SessionStore
+from tradex.live.watch import MarketWatch
 from tradex.logging_setup import get_logger
 from tradex.persistence.db import init_database
 from tradex.persistence.decision_log import DecisionLog, utc_now_iso
@@ -112,6 +113,9 @@ class TradexService:
         self.providers = ProviderRegistry()
         self.providers.register(ReplayProvider(self.store))
         self._states: dict[str, SymbolState] = {}
+        #: Laufende Marktbeobachtung (Chart ohne Handel). Hoechstens eine -
+        #: es gibt nur eine Verbindung zur Bridge.
+        self._watch: MarketWatch | None = None
 
         log.info(
             "service_started",
@@ -124,6 +128,7 @@ class TradexService:
         # Zuerst den Betrieb anhalten, dann die Datenbanken schliessen: eine
         # noch laufende Sitzung wuerde sonst in eine geschlossene Verbindung
         # schreiben, und der letzte Trade waere genau der, der fehlt.
+        self.stop_watch()
         if self.sessions.is_running:
             self.sessions.stop()
         self.session_store.close()
@@ -248,6 +253,84 @@ class TradexService:
         if decisions:
             self._persist_decisions(decisions)
         return updates
+
+    # --------------------------------------------------------- Beobachtung
+    def start_watch(self, symbol: str, host: str = "", port: int = 0) -> MarketWatch:
+        """Ein Symbol live mitlesen, ohne zu handeln.
+
+        Wird ein anderes Symbol beobachtet, wird gewechselt: es gibt nur eine
+        Verbindung zur Bridge. Laeuft eine Handelssitzung, wird abgelehnt -
+        die fuehrt ihren eigenen Zustand, und der Chart folgt ihr ohnehin.
+        """
+        symbol = symbol.upper()
+        if self.sessions.is_running:
+            raise LookupError(
+                "Es laeuft eine Handelssitzung - deren Daten zeigt der Chart bereits."
+            )
+        if self._watch is not None:
+            if self._watch.symbol == symbol and self._watch.is_running:
+                return self._watch
+            self.stop_watch()
+
+        instrument = get_instrument(symbol)
+        if not instrument.nt8_symbol:
+            raise LookupError(f"Fuer {symbol} ist kein nt8_symbol hinterlegt.")
+
+        # Ein Zustand muss existieren, bevor Bars hineinlaufen koennen. Fuer die
+        # echten Kontrakte gibt es keinen gespeicherten Bestand, also wird hier
+        # ein leerer angelegt - `load()` verlangt Dateien und waere dafuer der
+        # falsche Weg.
+        if symbol not in self._states:
+            self._states[symbol] = SymbolState(
+                symbol=symbol,
+                instrument=instrument,
+                context=MarketContext(symbol, instrument, self.config),
+                strategy=build_portfolio(symbol, instrument, self.config),
+                base=BarSeries(),
+            )
+
+        watch = MarketWatch(
+            symbol,
+            instrument,
+            self.config.data.base_timeframe,
+            self._on_watch_bar,
+            host=host or DEFAULT_HOST,
+            port=port or DEFAULT_PORT,
+            history_days=self.config.live.nt8_history_days,
+            history_timeout_seconds=self.config.live.nt8_history_timeout_seconds,
+        )
+        self._watch = watch
+        watch.start()
+        return watch
+
+    def stop_watch(self) -> None:
+        watch, self._watch = self._watch, None
+        if watch is not None:
+            watch.stop()
+
+    @property
+    def watch(self) -> MarketWatch | None:
+        return self._watch
+
+    def _on_watch_bar(self, symbol: str, bar: Bar) -> None:
+        """Eine Live-Bar analysieren - derselbe Pfad wie Wiedergabe und Backtest.
+
+        Laeuft im Beobachtungsfaden. Geschrieben wird nur in den Zustand dieses
+        Symbols; gelesen wird von der API ohne Sperre, aus demselben Grund wie
+        bei `SessionManager.state()` - eine Sperre koppelte die Anzeige an den
+        Datenfaden.
+        """
+        state = self._states.get(symbol)
+        if state is None:
+            return
+        updates = state.context.on_base_bar(bar)
+        if not updates:
+            return
+        decisions = state.strategy.on_updates(updates, state.context)
+        state.last_updates = updates
+        state.last_decisions = decisions
+        if decisions:
+            self._persist_decisions(decisions)
 
     def _persist_decisions(self, decisions: list[StrategyDecision]) -> None:
         """Strategieentscheidungen ins Protokoll schreiben (Spec §25).

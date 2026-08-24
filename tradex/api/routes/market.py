@@ -106,6 +106,76 @@ def import_nt8_history(request: HistoryRequest) -> HistoryResponse:
     )
 
 
+class WatchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str
+    host: str = ""
+    port: int = Field(default=0, ge=0, le=65535)
+
+
+class WatchState(BaseModel):
+    """Zustand der Marktbeobachtung - auch aussagefaehig, wenn nichts laeuft."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    running: bool
+    symbol: str = ""
+    connected: bool = False
+    bars_seen: int = 0
+    ticks_seen: int = 0
+    last_price: float = 0.0
+    detail: str = ""
+
+
+def _watch_state() -> WatchState:
+    watch = get_service().watch
+    if watch is None or not watch.is_running:
+        return WatchState(running=False)
+    return WatchState(
+        running=True,
+        symbol=watch.symbol,
+        connected=watch.connected,
+        bars_seen=watch.bars_seen,
+        ticks_seen=watch.ticks_seen,
+        last_price=watch.last_price,
+        detail=watch.detail,
+    )
+
+
+@router.get("/watch")
+def watch_status() -> WatchState:
+    """Zustand samt letztem Kurs.
+
+    Bewusst schlank und ohne blockierenden Aufruf: die Oberflaeche fragt das
+    mehrmals je Sekunde ab, damit sich der Kurs bewegt wie in NinjaTrader. Der
+    Zustandsstrom (SSE) taugt dafuer nicht - der prueft einmal je Sekunde und
+    traegt den gesamten Betriebszustand mit sich.
+    """
+    return _watch_state()
+
+
+@router.post("/watch/start")
+def watch_start(request: WatchRequest) -> WatchState:
+    """Ein Symbol live mitlesen - ohne Handel.
+
+    Kein Risikobuch, kein Broker, kein Executor: aus einer Beobachtung kann
+    strukturell keine Order werden. Damit laesst sich der Chart ansehen, ohne
+    den Handel scharfzuschalten - vorher war beides dasselbe.
+    """
+    try:
+        get_service().start_watch(request.symbol, host=request.host, port=request.port)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _watch_state()
+
+
+@router.post("/watch/stop")
+def watch_stop() -> WatchState:
+    get_service().stop_watch()
+    return _watch_state()
+
+
 @router.get("/bars")
 def bars(
     symbol: str,

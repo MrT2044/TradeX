@@ -311,6 +311,11 @@ pre {
 
 /* Echtzeitmarke: der Unterschied zwischen laufenden und gespeicherten Kursen
    muss man sehen koennen, ohne ihn sich aus der Betriebsanzeige herzuleiten. */
+/* Beobachtung ist nicht Betrieb - andere Farbe, damit man es nicht
+   verwechselt. Gruen heisst hier "es wird gehandelt". */
+.chart-live--watch {
+  color: var(--text-muted, #8b93a7);
+}
 .chart-live__price {
   margin-left: 8px;
   font-size: 13px;

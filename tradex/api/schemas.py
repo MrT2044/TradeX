@@ -381,6 +381,12 @@ class InstrumentDto(_Dto):
     tick_value: float
     point_value: float
     price_decimals: int
+    live_capable: bool
+    """Ob NinjaTrader dieses Instrument kennt (`nt8_symbol` gesetzt).
+
+    Die Oberflaeche braucht das, um die Marktbeobachtung nur dort zu starten,
+    wo sie ueberhaupt etwas liefern kann. Der Kontraktname selbst gehoert
+    nicht in den UI-Vertrag - er ist eine Angelegenheit des Feeds."""
 
     @classmethod
     def of(cls, instrument: Instrument) -> InstrumentDto:
@@ -393,6 +399,7 @@ class InstrumentDto(_Dto):
             tick_value=instrument.tick_value,
             point_value=instrument.point_value,
             price_decimals=instrument.price_decimals,
+            live_capable=bool(instrument.nt8_symbol),
         )
 
 

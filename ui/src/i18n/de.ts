@@ -281,6 +281,7 @@ export const de = {
     showSweeps: 'Sweeps',
     forming: 'laufende Bar',
     live: 'ECHTZEIT',
+    watching: 'BEOBACHTUNG',
     chooseSymbol: 'Oben ein Instrument waehlen',
     importHistory: 'Historie aus NinjaTrader laden',
     importEmpty: (detail: string) =>

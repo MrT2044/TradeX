@@ -53,7 +53,13 @@ def status() -> SessionStatusDto:
 
 @router.post("/session/start")
 def start(request: SessionStartRequest) -> SessionStatusDto:
-    manager = get_service().sessions
+    service = get_service()
+    # Die Beobachtung muss weichen, bevor die Sitzung ihren Feed aufmacht: es
+    # gibt nur eine Verbindung zur Bridge, und der Betrieb hat Vorrang. Der
+    # Chart merkt davon nichts - er folgt automatisch der Sitzung
+    # (`TradexService.chart_context`).
+    service.stop_watch()
+    manager = service.sessions
     return SessionStatusDto.of(
         manager.start(
             SessionRequest(

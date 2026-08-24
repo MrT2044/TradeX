@@ -174,6 +174,8 @@ export interface Instrument {
   tick_value: number;
   point_value: number;
   price_decimals: number;
+  /** NinjaTrader kennt dieses Instrument - Marktbeobachtung ist moeglich. */
+  live_capable: boolean;
 }
 
 export interface Coverage {
@@ -491,6 +493,17 @@ export interface BrokerState {
   open_orders: number;
   tradeable_symbols: string[];
   ready: boolean;
+}
+
+export interface WatchState {
+  running: boolean;
+  symbol: string;
+  connected: boolean;
+  bars_seen: number;
+  ticks_seen: number;
+  /** Zuletzt gehandelter Kurs - nur zur Anzeige, nie fuer eine Entscheidung. */
+  last_price: number;
+  detail: string;
 }
 
 export interface HistoryResponse {

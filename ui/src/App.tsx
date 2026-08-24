@@ -14,6 +14,7 @@ import type {
   SessionStatus,
   SimulatedTrade,
   StrategyState,
+  WatchState,
 } from './api/types';
 import { useIsMobile } from './api/useIsMobile';
 import { useSessionStream } from './api/useSessionStream';
@@ -58,6 +59,15 @@ const WARMUP_CHUNK = 5_000;
  *  waechst, und grob genug, dass die Abfrage nicht ins Gewicht faellt. */
 const LIVE_REFRESH_MS = 5_000;
 
+/** Wie oft der laufende Kurs geholt wird.
+ *
+ *  Vier Mal je Sekunde. Die Anzeige soll sich bewegen wie in NinjaTrader, und
+ *  einmal je Sekunde - der Takt des Zustandsstroms - sah aus, als stuende sie
+ *  still. Die Abfrage dahinter ist absichtlich winzig: sie liest nur den
+ *  letzten Kurs und ein paar Zaehler, ohne den Betriebszustand mitzuschleppen
+ *  und ohne irgendwo zu blockieren. */
+const PRICE_REFRESH_MS = 250;
+
 const DEFAULT_TOGGLES: ChartToggles = {
   fvg: true,
   liquidity: true,
@@ -94,6 +104,8 @@ export default function App() {
   /** Zaehler, um den Ladevorgang erneut anzustossen, ohne das Symbol zu
    *  wechseln - etwa nachdem Historie nachgeladen wurde. */
   const [reload, setReload] = useState(0);
+  /** Zustand der Marktbeobachtung - Chart und Kurs ohne Handelssitzung. */
+  const [watch, setWatch] = useState<WatchState | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [session, setSession] = useState<SessionStatus | null>(null);
@@ -373,16 +385,103 @@ export default function App() {
     };
   }, [playing, stepSize, advance]);
 
+  // --- Woher die Livedaten kommen ------------------------------------------
+  // Zwei Quellen, ein Chart: die Handelssitzung hat Vorrang, sonst die
+  // Marktbeobachtung. Die Unterscheidung steht hier oben, weil beide
+  // Nachfuehrungen unten sie brauchen.
+  const liveActive = Boolean(
+    session?.active && session.running && symbol && session.symbols.includes(symbol),
+  );
+  /** Beobachtung laeuft fuer GENAU dieses Symbol. Die Pruefung auf das Symbol
+   *  ist wichtig: nach einem Wechsel laeuft die alte Beobachtung noch kurz
+   *  weiter, und ihr Kurs gehoerte dann zu einem anderen Instrument. */
+  const watchActive = Boolean(watch?.running && symbol && watch.symbol === symbol);
+  /** Der laufende Kurs - egal aus welcher der beiden Quellen. */
+  const livePrice = liveActive
+    ? session?.last_prices?.[symbol]
+    : watchActive && watch?.last_price
+      ? watch.last_price
+      : undefined;
+
+  // --- Marktbeobachtung: Chart live, ohne Handel ---------------------------
+  //
+  // Fuer Instrumente mit NinjaTrader-Anbindung laeuft die Beobachtung
+  // dauerhaft, sobald sie gewaehlt sind - Zusehen ist etwas anderes als
+  // Handeln, und bisher waren beide dasselbe. Startet eine Handelssitzung,
+  // uebernimmt die (der Server beendet die Beobachtung dabei selbst).
+  useEffect(() => {
+    if (!symbol || liveActive) return;
+    if (!instruments.find((i) => i.symbol === symbol)?.live_capable) return;
+
+    let cancelled = false;
+    void api
+      .watchStart(symbol)
+      .then((zustand) => {
+        if (!cancelled) setWatch(zustand);
+      })
+      .catch(() => {
+        /* Ohne NinjaTrader gibt es nichts zu beobachten. Kein Fehlerband:
+           das ist ein normaler Zustand, kein Stoerfall - der Chart zeigt
+           dann eben die gespeicherte Historie. */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [symbol, liveActive, instruments]);
+
+  // Kurs schnell nachfuehren. Der Zustandsstrom prueft einmal je Sekunde und
+  // traegt den ganzen Betriebszustand mit sich; fuer eine Kursanzeige, die sich
+  // bewegt wie in NinjaTrader, ist das zu grob und zu schwer. Deshalb eine
+  // eigene, sehr schlanke Abfrage.
+  useEffect(() => {
+    if (!watchActive) return;
+    let cancelled = false;
+    const timer = window.setInterval(() => {
+      void api
+        .watch()
+        .then((zustand) => {
+          if (!cancelled) setWatch(zustand);
+        })
+        .catch(() => undefined);
+    }, PRICE_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [watchActive]);
+
+  // Bars der Beobachtung nachholen - seltener als der Kurs, weil sich nur zum
+  // Bar-Schluss etwas aendert. Die laufende Kerze bewegt der Kurs.
+  useEffect(() => {
+    if (!watchActive || !symbol) return;
+    let cancelled = false;
+    const holen = async () => {
+      try {
+        const [barsData, overlayData] = await Promise.all([
+          api.bars(symbol, timeframe),
+          api.overlays(symbol, timeframe),
+        ]);
+        if (cancelled) return;
+        setBars(barsData);
+        setOverlays(overlayData);
+      } catch {
+        /* Ein Aussetzer ist kein Grund aufzugeben. */
+      }
+    };
+    void holen();
+    const timer = window.setInterval(() => void holen(), LIVE_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [watchActive, symbol, timeframe]);
+
   // --- Echtzeit: der Chart folgt der laufenden Sitzung ---------------------
   // Laeuft eine Sitzung fuer dieses Symbol, liefert `/api/bars` deren Bars -
   // die Auswahl trifft der Server (`TradexService.chart_context`). Hier muss
   // nur regelmaessig nachgefragt werden. Der Zustandsstrom (SSE) meldet
   // Zaehler, keine Kursreihen; die waeren fuer einen Dauerstrom zu gross und
   // wuerden bei jeder Bar das ganze Chart neu schicken.
-  const liveActive = Boolean(
-    session?.active && session.running && symbol && session.symbols.includes(symbol),
-  );
-
   useEffect(() => {
     if (!liveActive || !symbol) return;
     let cancelled = false;
@@ -582,18 +681,17 @@ export default function App() {
               overlays={overlays}
               toggles={toggles}
               priceDecimals={instrument?.price_decimals ?? 2}
-              livePrice={liveActive ? session?.last_prices?.[symbol] : undefined}
+              livePrice={livePrice}
             />
-            {liveActive && (
-              <div className="chart-live">
-                {de.chart.live}
-                {/* Der laufende Kurs aus den Ticks. Er steht neben der Marke
-                    und nicht im Chart: gezeichnet wird auf geschlossenen
-                    Bars, und eine Linie, die zwischen den Kerzen zappelt,
-                    liesse offen, was davon ausgewertet wurde. */}
-                {typeof session?.last_prices?.[symbol] === 'number' && (
+            {/* ECHTZEIT bedeutet Handelsbetrieb, BEOBACHTUNG nur Zusehen. Der
+                Unterschied muss sichtbar sein: im einen Fall koennen Orders
+                entstehen, im anderen strukturell nicht. */}
+            {(liveActive || watchActive) && (
+              <div className={liveActive ? 'chart-live' : 'chart-live chart-live--watch'}>
+                {liveActive ? de.chart.live : de.chart.watching}
+                {typeof livePrice === 'number' && livePrice > 0 && (
                   <span className="chart-live__price">
-                    {session.last_prices[symbol].toFixed(instrument?.price_decimals ?? 2)}
+                    {livePrice.toFixed(instrument?.price_decimals ?? 2)}
                   </span>
                 )}
               </div>

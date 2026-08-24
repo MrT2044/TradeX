@@ -105,6 +105,45 @@ def test_instrumente_und_bestand(client: TestClient):
     assert coverage[0]["bar_count"] == 60 * 24 * 3
 
 
+def test_live_capable_sagt_wo_beobachtung_moeglich_ist(client: TestClient):
+    """Die Oberflaeche startet die Beobachtung nur, wo sie etwas liefern kann.
+
+    Gegen die Instrumentendatei geprueft, nicht gegen eine feste Liste: sonst
+    wuerde der Test beim naechsten neuen Kontrakt zur Luege, ohne rot zu
+    werden.
+    """
+    from tradex.config import load_instruments
+
+    hinterlegt = load_instruments(PROJECT_ROOT / "config" / "instruments.yaml")
+    body = client.get("/api/instruments").json()
+
+    for item in body:
+        erwartet = bool(hinterlegt[item["symbol"]].nt8_symbol)
+        assert item["live_capable"] is erwartet, item["symbol"]
+
+    # Waechter gegen leere Wahrheit: es MUSS beide Sorten geben, sonst prueft
+    # die Schleife oben nichts.
+    assert any(i["live_capable"] for i in body)
+    assert any(not i["live_capable"] for i in body)
+
+
+def test_beobachtung_ist_auch_ohne_ninjatrader_aussagefaehig(client: TestClient):
+    """Ohne laufende Beobachtung muss der Zustand trotzdem antworten.
+
+    Ein fehlendes Feld waere von "laeuft nicht" nicht zu unterscheiden - und
+    die Oberflaeche fragt diesen Endpunkt viermal je Sekunde.
+    """
+    body = client.get("/api/watch").json()
+    assert body["running"] is False
+    assert body["last_price"] == 0.0
+
+    # Fuer ein Instrument ohne NinjaTrader-Anbindung wird abgelehnt, statt eine
+    # Verbindung aufzumachen, die nie etwas liefern kann.
+    antwort = client.post("/api/watch/start", json={"symbol": SYMBOL})
+    assert antwort.status_code == 404
+    assert "nt8_symbol" in antwort.json()["detail"]
+
+
 def test_laden_analysiert_und_meldet_datenqualitaet(client: TestClient):
     body = client.post("/api/load", json={"symbol": SYMBOL, "feed_all": True}).json()
     assert body["base_bars"] == 60 * 24 * 3
