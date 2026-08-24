@@ -282,6 +282,10 @@ export const de = {
     forming: 'laufende Bar',
     live: 'ECHTZEIT',
     chooseSymbol: 'Oben ein Instrument waehlen',
+    liveOnlyHint:
+      'Keine gespeicherte Historie - die Bars dieses Kontrakts kommen live. ' +
+      'Unten eine Sitzung mit "Echtzeit (NT8)" starten; die letzten Tage ' +
+      'werden dabei aus NinjaTrader nachgeladen.',
     analysing: (done: number, total: number) =>
       `Analysiere ${done.toLocaleString('de-DE')} von ${total.toLocaleString('de-DE')} Bars ...`,
   },

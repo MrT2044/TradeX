@@ -188,6 +188,18 @@ export default function App() {
         setIntegrity(null);
         setCursor(0);
         setTotal(0);
+
+        // MNQ und NQ haben keine gespeicherte Historie - ihre Bars kommen
+        // live von NinjaTrader. Fuer sie wird gar nicht erst geladen: der
+        // Versuch endete in "Keine 1m-Daten im lokalen Speicher", und das ist
+        // eine Fehlermeldung fuer einen Zustand, der voellig in Ordnung ist.
+        // Eine Meldung, die bei normalem Verhalten erscheint, bringt einem bei,
+        // Meldungen zu ignorieren - und dann wird auch die echte uebersehen.
+        if (!symbolsWithDataRef.current.has(symbol)) {
+          if (!cancelled) await refreshView(symbol, timeframe).catch(() => undefined);
+          return;
+        }
+
         // feedAll=false und danach portionsweise selbst durchlaufen: nur so
         // laesst sich der Fortschritt anzeigen. `feedAll: true` rechnet im
         // Server durch und meldet sich erst, wenn es fertig ist - fuenfzehn
@@ -335,6 +347,9 @@ export default function App() {
   // Abhaengigkeiten zu nehmen - sonst startet er bei jeder Zustandsmeldung neu.
   const sessionRef = useRef(session);
   sessionRef.current = session;
+
+  const symbolsWithDataRef = useRef(symbolsWithData);
+  symbolsWithDataRef.current = symbolsWithData;
 
   useEffect(() => {
     if (!playing) return;
@@ -542,6 +557,13 @@ export default function App() {
             {!symbol && (
               <div className="chart-loading">
                 <div className="chart-loading__text">{de.chart.chooseSymbol}</div>
+              </div>
+            )}
+            {/* Kein Fehler, sondern eine Ansage: fuer dieses Instrument gibt es
+                nichts zu laden, die Bars entstehen erst im Betrieb. */}
+            {symbol && !symbolsWithData.has(symbol) && !liveActive && !busy && (
+              <div className="chart-loading">
+                <div className="chart-loading__text">{de.chart.liveOnlyHint}</div>
               </div>
             )}
             {progress && (

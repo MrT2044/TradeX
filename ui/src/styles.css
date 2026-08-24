@@ -284,6 +284,7 @@ pre {
   top: 50%;
   transform: translate(-50%, -50%);
   min-width: 260px;
+  max-width: 420px;
   padding: 14px 18px;
   background: var(--bg-raised);
   border: 1px solid var(--border);
