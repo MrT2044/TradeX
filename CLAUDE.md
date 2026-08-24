@@ -220,6 +220,21 @@ schmalgerechneter Desktop, und enthält **keine Steuerbefehle**. Statusabfragen
 dürfen **nie** blockierende Broker-Aufrufe machen (`get_open_orders()` wartet
 auf Antwort) — sonst steht die Anzeige, wenn der Broker klemmt.
 
+**Marktbeobachtung ≠ Betrieb.** `live/watch.py` liest ein Symbol live mit —
+Historie, Bars, Ticks — **ohne Risikobuch, Broker oder Executor**; eine Order
+kann daraus strukturell nicht entstehen. Sie läuft, sobald ein Instrument mit
+`nt8_symbol` gewählt ist. Es gibt nur **eine** Verbindung zur Bridge: eine
+startende Handelssitzung beendet die Beobachtung (`stop_watch()` in der
+Start-Route), ebenso der Historienabruf. Anzeige: `BEOBACHTUNG` grau vs.
+`ECHTZEIT` grün — der Unterschied entscheidet, ob Orders entstehen können.
+Der laufende Kurs kommt über `/api/watch` (winzig, 250 ms), **nicht** über
+SSE — der Zustandsstrom prüft einmal je Sekunde und trägt den ganzen
+Betriebszustand mit sich.
+
+**Ein Startweg:** `start_tradex.bat`. `TradeX.bat` leitet nur weiter — sie war
+früher ein zweiter Weg **ohne** Doppelstartsperre. Zwei Startwege heißt immer,
+dass einer die Prüfungen nicht hat.
+
 **Chart:** Woher die Bars kommen, entscheidet `TradexService.chart_context()`
 — **läuft eine Sitzung für das Symbol, gilt deren Analysezustand**, sonst der
 geladene Wiedergabe-Zustand. Die Auswahl gehört in den Service, nicht in die
