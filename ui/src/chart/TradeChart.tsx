@@ -35,6 +35,9 @@ interface Props {
   overlays: Overlays | null;
   toggles: ChartToggles;
   priceDecimals: number;
+  /** Zuletzt gehandelter Kurs aus den Ticks. Bewegt die laufende Bar zwischen
+   *  zwei Bar-Schluessen mit - geht in keine Analyse ein (Invariante 1). */
+  livePrice?: number;
 }
 
 /** Engine-Timestamps sind Nanosekunden UTC, lightweight-charts erwartet Sekunden. */
@@ -143,12 +146,15 @@ function buildMarkers(overlays: Overlays | null, toggles: ChartToggles): SeriesM
   return markers;
 }
 
-export function TradeChart({ bars, overlays, toggles, priceDecimals }: Props) {
+export function TradeChart({ bars, overlays, toggles, priceDecimals, livePrice }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick', Time> | null>(null);
   const primitiveRef = useRef<OverlayPrimitive | null>(null);
   const markersRef = useRef<ReturnType<typeof createSeriesMarkers<Time>> | null>(null);
+  /** Welcher Datenbestand gerade gezeichnet ist - Symbol und Zeitebene.
+   *  Wechselt er, wird die Ansicht neu eingepasst; sonst bleibt sie stehen. */
+  const datensatzRef = useRef<string>('');
 
   // Chart einmalig anlegen.
   useEffect(() => {
@@ -237,8 +243,45 @@ export function TradeChart({ bars, overlays, toggles, priceDecimals }: Props) {
     }
 
     series.setData(data);
-    chartRef.current?.timeScale().fitContent();
+
+    // Nur bei einem WIRKLICH neuen Datenbestand einpassen - nicht bei jeder
+    // Aktualisierung. Vorher sprang der Chart im Echtbetrieb alle fuenf
+    // Sekunden auf die Gesamtansicht zurueck, und man konnte nicht
+    // hineinzoomen, ohne sofort wieder herausgerissen zu werden. Wer den
+    // Ausschnitt gewaehlt hat, will ihn behalten; die Ansicht gehoert dem
+    // Betrachter, nicht dem Aktualisierungstakt.
+    const kennung = `${bars.symbol}-${bars.timeframe}`;
+    if (kennung !== datensatzRef.current) {
+      datensatzRef.current = kennung;
+      chartRef.current?.timeScale().fitContent();
+    }
   }, [bars]);
+
+  // Laufender Kurs: die noch offene Bar mitbewegen.
+  //
+  // Bars kommen im Minutentakt, Ticks mehrmals je Sekunde. Ohne das hier stand
+  // die Kerze bis zu einer Minute still, waehrend NinjaTrader daneben lief -
+  // und ein Chart, der sich nicht ruehrt, sieht kaputt aus.
+  //
+  // Angefasst wird ausschliesslich die LAUFENDE Bar. Sie ist per Invariante 1
+  // von der Analyse ausgenommen und nur zur Anzeige da; keine geschlossene Bar
+  // wird nachtraeglich veraendert.
+  useEffect(() => {
+    const series = seriesRef.current;
+    const forming = bars?.forming;
+    if (!series || !forming || livePrice === undefined) return;
+
+    series.update({
+      time: toChartTime(forming.ts),
+      open: forming.open,
+      high: Math.max(forming.high, livePrice),
+      low: Math.min(forming.low, livePrice),
+      close: livePrice,
+      color: COLORS.formingBar,
+      borderColor: COLORS.formingBorder,
+      wickColor: COLORS.formingBorder,
+    });
+  }, [livePrice, bars]);
 
   const boxes = useMemo(() => buildBoxes(overlays, toggles), [overlays, toggles]);
   const lines = useMemo(() => buildLines(overlays, toggles), [overlays, toggles]);

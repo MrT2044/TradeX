@@ -72,6 +72,9 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> Iterator[TestClient]:
     raw["data"]["database"] = str(tmp / "tradex.db")
     raw["data"]["log_dir"] = str(tmp / "logs")
     raw["data"]["default_symbol"] = SYMBOL
+    # Wie in test_session_api.py: kein echter Broker, sonst haengt die Suite
+    # an einem laufenden IB Gateway (Begruendung dort).
+    raw["broker"]["enabled"] = False
     config_path = tmp / "config.yaml"
     config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
 
@@ -204,11 +207,11 @@ def test_der_brokerzustand_ist_auch_ohne_anbindung_aussagefaehig(client: TestCli
     """Ein fehlendes Feld waere von "nicht verbunden" nicht zu unterscheiden."""
     broker = client.get("/api/session").json()["broker"]
 
-    # `enabled` spiegelt die Konfiguration und wechselt mit ihr; die Aussage
-    # dieses Tests ist eine andere: solange keine Sitzung laeuft, gibt es keine
-    # Anbindung - und das Feld sagt es, statt zu fehlen.
-    erwartet = load_config(PROJECT_ROOT / "config" / "default.yaml")
-    assert broker["enabled"] is erwartet.broker.enabled
+    # `enabled` spiegelt die Konfiguration - und die Fixture schaltet den
+    # Broker ab. Die Aussage dieses Tests ist eine andere: solange keine
+    # Sitzung laeuft, gibt es keine Anbindung, und das Feld sagt es, statt zu
+    # fehlen.
+    assert broker["enabled"] is False
     assert broker["connected"] is False
     assert broker["ready"] is False
     assert broker["account"] == ""

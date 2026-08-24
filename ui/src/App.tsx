@@ -152,18 +152,24 @@ export default function App() {
   // --- Chartdaten und Analyse fuer den aktuellen Stand holen ---------------
   const refreshView = useCallback(
     async (targetSymbol: string, targetTimeframe: string) => {
-      const [barsData, overlayData, snapshotData, strategyData, logData] = await Promise.all([
-        api.bars(targetSymbol, targetTimeframe),
-        api.overlays(targetSymbol, targetTimeframe),
-        api.analysis(targetSymbol),
-        api.strategy(targetSymbol),
-        api.logs(120),
-      ]);
-      setBars(barsData);
-      setOverlays(overlayData);
-      setSnapshot(snapshotData);
-      setStrategy(strategyData);
-      setLogs(logData);
+      // `allSettled`, nicht `all`: die fuenf Abfragen haengen nicht voneinander
+      // ab, und eine gescheiterte darf die anderen nicht mitreissen. Genau das
+      // ist passiert - waehrend eines laufenden Betriebs auf MNQ kamen die
+      // Bars einwandfrei, aber eine 404 daneben liess das Chart leer, als
+      // waere gar nichts angekommen. Was da ist, wird angezeigt.
+      const [barsData, overlayData, snapshotData, strategyData, logData] =
+        await Promise.allSettled([
+          api.bars(targetSymbol, targetTimeframe),
+          api.overlays(targetSymbol, targetTimeframe),
+          api.analysis(targetSymbol),
+          api.strategy(targetSymbol),
+          api.logs(120),
+        ]);
+      if (barsData.status === 'fulfilled') setBars(barsData.value);
+      if (overlayData.status === 'fulfilled') setOverlays(overlayData.value);
+      if (snapshotData.status === 'fulfilled') setSnapshot(snapshotData.value);
+      if (strategyData.status === 'fulfilled') setStrategy(strategyData.value);
+      if (logData.status === 'fulfilled') setLogs(logData.value);
     },
     [],
   );
@@ -576,6 +582,7 @@ export default function App() {
               overlays={overlays}
               toggles={toggles}
               priceDecimals={instrument?.price_decimals ?? 2}
+              livePrice={liveActive ? session?.last_prices?.[symbol] : undefined}
             />
             {liveActive && (
               <div className="chart-live">

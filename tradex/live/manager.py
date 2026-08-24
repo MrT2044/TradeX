@@ -65,6 +65,7 @@ from tradex.persistence.db import init_database
 from tradex.persistence.decision_log import DecisionLog, utc_now_iso
 from tradex.persistence.models import SystemEvent
 from tradex.risk.ledger import RiskLedger
+from tradex.strategy.portfolio import StrategyPortfolio
 
 log = get_logger(__name__)
 
@@ -546,6 +547,19 @@ class SessionManager:
             return None
         state = session.books.get(symbol.upper())
         return state.book.context if state is not None else None
+
+    def strategy(self, symbol: str) -> StrategyPortfolio | None:
+        """Das Strategiebuch des laufenden Betriebs - oder None.
+
+        Gegenstueck zu `context()`: Kurse und Entscheidungen muessen aus
+        derselben Quelle kommen, sonst stehen zwei Zustaende nebeneinander,
+        die nicht zusammengehoeren.
+        """
+        session = self._session
+        if session is None:
+            return None
+        state = session.books.get(symbol.upper())
+        return state.book.strategy if state is not None else None
 
     def last_prices(self) -> dict[str, float]:
         """Zuletzt gehandelte Kurse aus dem Feed - nur zur Anzeige.

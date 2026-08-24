@@ -232,7 +232,12 @@ die Muster, die dort liegen. Der volle Bestand wären ~105 s je Symbolwechsel;
 für längere Zeiträume ist der Backtest da. `/load` nimmt 400.000 Bars, `/step`
 nur 100.000 je Anfrage — `client.ts` teilt selbst auf.
 
-**Testkonventionen:** Handgebaute Fixtures statt Zufallsdaten. Wächter-Tests
+**Testkonventionen:** Handgebaute Fixtures statt Zufallsdaten. **Kein Test
+fasst je ein echtes Gateway an** — Fixtures, die `default.yaml` laden, müssen
+`raw["broker"]["enabled"] = False` setzen. Seit dem Scharfschalten baute sonst
+jede Testsitzung einen echten IBKR-Adapter, hing in 15-s-Timeouts und war grün
+oder rot, je nachdem ob auf dieser Maschine gerade ein Gateway lief. Die
+Orderanbindung testet der `FakeBroker` (`tests/fake_broker.py`). Wächter-Tests
 gegen leere Wahrheit. **Nie gegen den Auslieferungszustand der Konfiguration
 prüfen** — vier Tests behaupteten `analysis_only`/`broker.enabled: false` als
 festen Text und rissen beim Scharfschalten; einer lief dabei statt in die

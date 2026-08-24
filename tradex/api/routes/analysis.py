@@ -82,13 +82,17 @@ def analysis(symbol: str, max_items: int = Query(default=50, ge=1, le=500)) -> C
 @router.get("/overlays")
 def overlays(symbol: str, timeframe: str = Query(default="5m")) -> OverlaysDto:
     tf = _timeframe(timeframe)
-    state = get_service().state(symbol)
-    tf_state = state.context.states.get(tf)
+    # Dieselbe Quelle wie Chart und Analyse (`chart_context`): waehrend einer
+    # Sitzung gibt es fuer die echten Kontrakte gar keinen Wiedergabe-Zustand,
+    # und `state()` warf dann 404 - mitten in einem laufenden Betrieb, dessen
+    # Bars daneben einwandfrei ankamen.
+    context = get_service().chart_context(symbol)
+    tf_state = context.states.get(tf)
     if tf_state is None:
         raise HTTPException(status_code=400, detail=f"Timeframe {tf.value} ist nicht konfiguriert")
 
     return OverlaysDto(
-        symbol=state.symbol,
+        symbol=context.symbol,
         timeframe=tf.value,
         swings=tuple(SwingDto.of(s) for s in tf_state.swings.all_swings()),
         fvgs=tuple(FvgDto.of(z) for z in tf_state.fvg.zones),

@@ -76,6 +76,15 @@ def client(tmp_path_factory: pytest.TempPathFactory) -> Iterator[TestClient]:
     raw["data"]["database"] = str(tmp / "tradex.db")
     raw["data"]["log_dir"] = str(tmp / "logs")
     raw["data"]["default_symbol"] = SYMBOL
+    # KEIN Broker. Diese Tests pruefen die Sitzungsmechanik, nicht die
+    # Orderanbindung - die hat ihre eigenen Tests mit einem FakeBroker.
+    #
+    # Ohne diese Zeile baut jede Testsitzung einen echten IBKR-Adapter und
+    # versucht, IB Gateway zu erreichen: die Suite haengt dann in
+    # 15-Sekunden-Timeouts und ist gruen oder rot, je nachdem ob auf DIESEM
+    # Rechner gerade ein Gateway laeuft. Ein Test, dessen Ergebnis von einem
+    # fremden Programm abhaengt, prueft nichts mehr.
+    raw["broker"]["enabled"] = False
     config_path = tmp / "config.yaml"
     config_path.write_text(yaml.safe_dump(raw), encoding="utf-8")
 
@@ -169,6 +178,38 @@ def test_der_chart_zeigt_die_bars_der_laufenden_sitzung(client: TestClient):
     assert gewachsen["bars_seen"] > 400
     nachher = client.get(f"/api/bars?symbol={SYMBOL}&timeframe=1m&limit=50").json()
     assert nachher["bars"][-1]["ts"] > vorher
+
+
+def test_die_ganze_ansicht_kommt_aus_der_laufenden_sitzung(client: TestClient):
+    """Nicht nur die Bars - auch Analyse, Overlays und Strategie.
+
+    Die Bars kamen aus der Sitzung, alles andere aus dem Wiedergabe-Zustand.
+    Fuer die echten Kontrakte gibt es den gar nicht, also antworteten
+    /api/analysis, /api/overlays und /api/strategy mit 404 - mitten in einem
+    laufenden Betrieb, dessen Bars daneben einwandfrei ankamen. Die
+    Oberflaeche buendelte alle fuenf Abfragen und zeigte deshalb NICHTS.
+
+    Und selbst wenn es beide Quellen gaebe, waere das Nebeneinander falsch:
+    Kurse aus dem Betrieb, Entscheidungen aus einer Wiedergabe, die
+    moeglicherweise Wochen woanders steht.
+    """
+    start(client, speed=LAUFEND, max_bars=0)
+    wait_until(client, lambda b: b["bars_seen"] > 200)
+
+    for pfad in (
+        f"/api/bars?symbol={SYMBOL}&timeframe=5m&limit=50",
+        f"/api/overlays?symbol={SYMBOL}&timeframe=5m",
+        f"/api/analysis?symbol={SYMBOL}",
+        f"/api/strategy?symbol={SYMBOL}&limit=10",
+    ):
+        antwort = client.get(pfad)
+        assert antwort.status_code == 200, f"{pfad}: {antwort.text}"
+
+    # Gegenprobe gegen leere Wahrheit: die Analyse muss den Betrieb zeigen,
+    # nicht einen leeren Zustand, der zufaellig auch 200 liefert.
+    body = client.get(f"/api/analysis?symbol={SYMBOL}").json()
+    assert body["symbol"] == SYMBOL
+    assert body["timeframes"], "die Analyse ist leer, obwohl Bars verarbeitet wurden"
 
 
 def test_eine_frisch_gestartete_sitzung_nimmt_erst_nach_verbindung_positionen_auf(

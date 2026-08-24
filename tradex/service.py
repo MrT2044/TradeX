@@ -294,7 +294,7 @@ class TradexService:
 
     # ------------------------------------------------------------------ Abfragen
     def snapshot(self, symbol: str, max_items: int = 50) -> ContextSnapshot:
-        return self.state(symbol).context.snapshot(max_items)
+        return self.chart_context(symbol).snapshot(max_items)
 
     # -------------------------------------------------------------- Historie
     def import_nt8_history(
@@ -368,7 +368,15 @@ class TradexService:
 
     # ------------------------------------------------------------------ Strategie
     def strategy(self, symbol: str) -> StrategyPortfolio:
-        return self.state(symbol).strategy
+        """Wie `chart_context`: der laufende Betrieb geht vor.
+
+        Sonst zeigten Chart und Strategieanzeige NEBENEINANDER zwei
+        verschiedene Zustaende - die Kurse aus der Sitzung, die Entscheidungen
+        aus einer Wiedergabe, die vielleicht Wochen woanders steht. Das faellt
+        nicht auf und ist genau deshalb gefaehrlich.
+        """
+        live = self.sessions.strategy(symbol)
+        return live if live is not None else self.state(symbol).strategy
 
     def decisions(self, symbol: str, limit: int = 50) -> list[StrategyDecision]:
         return self.state(symbol).strategy.recent_decisions(limit)
