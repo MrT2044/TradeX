@@ -9,6 +9,8 @@ interface Props {
   snapshot: ContextSnapshot | null;
   coverage: Coverage[];
   symbols: string[];
+  /** Welche Symbole gespeicherte Historie haben. */
+  withData: Set<string>;
   selected: string;
   onSelect: (symbol: string) => void;
   busy: boolean;
@@ -20,6 +22,7 @@ export function StatusBar({
   snapshot,
   coverage,
   symbols,
+  withData,
   selected,
   onSelect,
   busy,
@@ -51,9 +54,18 @@ export function StatusBar({
             disabled={busy || symbols.length === 0}
             onChange={(event) => onSelect(event.target.value)}
           >
+            {/* Leerer Eintrag als Ausgangszustand: der Start waehlt nichts
+                mehr von selbst, also muss die Auswahl auch zeigen koennen,
+                dass noch nichts gewaehlt ist. */}
+            {!selected && <option value="">{de.status.chooseSymbol}</option>}
             {symbols.map((symbol) => (
               <option key={symbol} value={symbol}>
+                {/* Ohne gespeicherte Historie sind das die Instrumente, deren
+                    Bars live hereinkommen (MNQ, NQ). Sie gehoeren in die
+                    Liste, aber man muss den Unterschied sehen, bevor man
+                    waehlt - nicht erst am leeren Chart danach. */}
                 {symbol}
+                {withData.has(symbol) ? '' : ` ${de.status.liveOnly}`}
               </option>
             ))}
           </select>

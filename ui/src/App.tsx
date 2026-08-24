@@ -97,8 +97,20 @@ export default function App() {
   const [sessionTrades, setSessionTrades] = useState<SimulatedTrade[]>([]);
   const [sessionBusy, setSessionBusy] = useState(false);
 
+  /** Alle konfigurierten Instrumente - nicht nur die mit gespeicherten Daten.
+   *
+   *  Vorher stand hier die Abdeckung des Speichers, weshalb MNQ und NQ gar
+   *  nicht zur Auswahl standen: fuer die echten Futures liegt nichts auf der
+   *  Platte, ihre Bars kommen live von NinjaTrader. Eine Liste, die genau die
+   *  Instrumente verschweigt, die man im Betrieb handelt, ist die falsche
+   *  Liste. Welche Historie haben, sagt die Auswahl selbst an (siehe
+   *  `withData`). */
   const symbols = useMemo(
-    () => Array.from(new Set(coverage.map((item) => item.symbol))).sort(),
+    () => instruments.map((item) => item.symbol).sort(),
+    [instruments],
+  );
+  const symbolsWithData = useMemo(
+    () => new Set(coverage.map((item) => item.symbol)),
     [coverage],
   );
   const instrument = useMemo(
@@ -121,13 +133,10 @@ export default function App() {
         setInstruments(instrumentData);
         setCoverage(coverageData);
 
-        const available = Array.from(new Set(coverageData.map((c) => c.symbol)));
-        // Bevorzugt das konfigurierte Standardinstrument, sonst das erste
-        // Symbol, fuer das ueberhaupt Daten vorliegen.
-        const preferred = available.includes(healthData.symbol)
-          ? healthData.symbol
-          : available[0];
-        if (preferred) setSymbol(preferred);
+        // KEINE Vorauswahl. Vorher lud der Start von selbst ein Instrument -
+        // fuenfzehn Sekunden Rechenzeit fuer etwas, das man vielleicht gar
+        // nicht sehen wollte, und beim Hinsehen weiss man nicht sofort, was
+        // da eigentlich steht. Gewaehlt wird bewusst.
       } catch (err) {
         if (!cancelled) setError(err instanceof Error ? err.message : String(err));
       }
@@ -166,9 +175,19 @@ export default function App() {
       setPlaying(false);
       setError(null);
       try {
-        // Ergebnis des vorigen Instruments verwerfen - sonst stuende beim
-        // Wechsel eine fremde Statistik unter dem neuen Symbol.
+        // ALLES vom vorigen Instrument verwerfen, bevor das neue laedt. Ein
+        // stehengebliebenes Chart unter einem bereits umgeschalteten
+        // Symbolnamen ist die gefaehrlichste Anzeige, die dieses Programm
+        // haben kann: sie ist nicht falsch beschriftet, sie zeigt schlicht
+        // etwas anderes als das, was oben steht. Lieber leer als verwechselbar.
         setBacktest(null);
+        setBars(null);
+        setOverlays(null);
+        setSnapshot(null);
+        setStrategy(null);
+        setIntegrity(null);
+        setCursor(0);
+        setTotal(0);
         // feedAll=false und danach portionsweise selbst durchlaufen: nur so
         // laesst sich der Fortschritt anzeigen. `feedAll: true` rechnet im
         // Server durch und meldet sich erst, wenn es fertig ist - fuenfzehn
@@ -426,6 +445,7 @@ export default function App() {
           snapshot={null}
           coverage={[]}
           symbols={[]}
+          withData={new Set()}
           selected=""
           onSelect={() => undefined}
           busy={false}
@@ -449,6 +469,7 @@ export default function App() {
         snapshot={snapshot}
         coverage={coverage}
         symbols={symbols}
+        withData={symbolsWithData}
         selected={symbol}
         onSelect={setSymbol}
         busy={busy}
@@ -505,6 +526,11 @@ export default function App() {
               priceDecimals={instrument?.price_decimals ?? 2}
             />
             {liveActive && <div className="chart-live">{de.chart.live}</div>}
+            {!symbol && (
+              <div className="chart-loading">
+                <div className="chart-loading__text">{de.chart.chooseSymbol}</div>
+              </div>
+            )}
             {progress && (
               <div className="chart-loading">
                 <div className="chart-loading__text">

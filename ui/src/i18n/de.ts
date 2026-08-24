@@ -245,6 +245,8 @@ export const de = {
   },
   status: {
     symbol: 'Instrument',
+    chooseSymbol: '-- Instrument waehlen --',
+    liveOnly: '(nur Echtzeit)',
     market: 'Markt',
     open: 'OFFEN',
     closed: 'GESCHLOSSEN',
@@ -279,6 +281,7 @@ export const de = {
     showSweeps: 'Sweeps',
     forming: 'laufende Bar',
     live: 'ECHTZEIT',
+    chooseSymbol: 'Oben ein Instrument waehlen',
     analysing: (done: number, total: number) =>
       `Analysiere ${done.toLocaleString('de-DE')} von ${total.toLocaleString('de-DE')} Bars ...`,
   },
