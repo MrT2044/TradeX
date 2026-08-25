@@ -74,6 +74,24 @@ class StopResult:
         return self.ok
 
 
+def max_stop_ticks(atr: float, instrument: Instrument, params: StopsConfig) -> float:
+    """Groesste erlaubte Stopweite in Ticks bei dieser ATR.
+
+    Die EINZIGE Stelle, an der aus `max_stop_atr_mult` eine Tickzahl wird.
+    Vorher stand die Grenze als blanke Zahl in der Config und wurde an drei
+    Stellen einzeln verglichen (`stops.py`, `opening_range.py`, `consistency.py`).
+    Das ging gut, solange es eine Konstante war - bei einer Rechnung waere es
+    der klassische Weg, wie zwei Strategien stillschweigend verschiedene
+    Grenzen bekommen.
+
+    Liefert 0.0 bei nicht belastbarer ATR; der Aufrufer muss diesen Fall
+    ausdruecklich behandeln (siehe `place_stop`).
+    """
+    if not np.isfinite(atr):
+        return 0.0
+    return params.max_stop_atr_mult * instrument.to_ticks(atr)
+
+
 def place_stop(
     candidate: SetupCandidate,
     entry_price: float,
@@ -114,7 +132,25 @@ def place_stop(
             ok=False,
             rejection="too_tight",
         )
-    if distance_ticks > params.max_stop_ticks:
+    # Die Obergrenze ist relativ zur ATR. Ohne belastbare ATR laesst sie sich
+    # nicht beurteilen - dann wird abgelehnt, nicht durchgewinkt. Fail closed:
+    # eine unbeantwortete Frage ist hier ein Nein. In der Praxis tritt der Fall
+    # kaum auf, weil die Aufrufer bereits auf NaN-ATR pruefen; er hat trotzdem
+    # einen eigenen Grund, damit er im Entscheidungsprotokoll sichtbar waere
+    # statt sich als "zu weit" zu tarnen.
+    if not np.isfinite(atr):
+        return StopResult(
+            price=price,
+            distance_points=distance_points,
+            distance_ticks=distance_ticks,
+            anchor_price=anchor_price,
+            anchor_kind=anchor_kind,
+            buffer_points=buffer_points,
+            ok=False,
+            rejection="no_atr",
+        )
+
+    if distance_ticks > max_stop_ticks(atr, instrument, params):
         return StopResult(
             price=price,
             distance_points=distance_points,

@@ -101,9 +101,18 @@ export const reasonText: Record<string, (p: ReasonParams) => string> = {
 
   'stop.placed': (p) =>
     `Stop bei ${price(p.price)} (${num(p.ticks, 0)} Ticks, Anker: ${STOP_ANCHOR[String(p.anchor)] ?? p.anchor})`,
-  'stop.too_wide': (p) => `Stop zu weit: ${num(p.ticks, 0)} Ticks, erlaubt sind ${p.max}`,
+  // `stop_ticks`, nicht `ticks` — der Code liefert diesen Namen (opening_range.py,
+  // chain.py). Hier stand `p.ticks`, und die Meldung rendete deshalb „NaN Ticks"
+  // ausgerechnet an der Stelle, die erklären soll, warum nicht gehandelt wurde.
+  'stop.too_wide': (p) =>
+    `Stop zu weit: ${num(p.stop_ticks, 0)} Ticks, erlaubt sind ${num(p.max, 0)}` +
+    (p.atr_ticks === undefined
+      ? ''
+      : ` (${num(p.atr_mult, 1)} × ATR von ${num(p.atr_ticks, 0)} Ticks)`),
   'stop.too_tight': (p) =>
-    `Stop zu eng: ${num(p.ticks, 0)} Ticks - er laege im normalen Rauschen (mindestens ${p.min})`,
+    `Stop zu eng: ${num(p.stop_ticks, 0)} Ticks - er laege im normalen Rauschen (mindestens ${p.min})`,
+  'stop.no_atr': () =>
+    'Keine belastbare Volatilitaet (ATR) - die Stopgrenze laesst sich nicht beurteilen',
 
   'target.liquidity': (p) =>
     `Ziel ${price(p.price)} an der naechsten unberuehrten Liquiditaet, CRV ${num(p.rr, 2)}`,
@@ -205,6 +214,7 @@ export const reasonLabel: Record<string, string> = {
   'target.none': 'Kein brauchbares Ziel',
   'stop.too_wide': 'Stop zu weit',
   'stop.too_tight': 'Stop zu eng',
+  'stop.no_atr': 'Keine belastbare ATR',
   'risk.size_zero': 'Stop zu weit fuer das Risikobudget',
   'risk.daily_loss_limit': 'Tagesverlustlimit erreicht',
   'risk.max_trades_per_day': 'Maximale Trades pro Tag erreicht',
@@ -282,6 +292,10 @@ export const de = {
     forming: 'laufende Bar',
     live: 'ECHTZEIT',
     watching: 'BEOBACHTUNG',
+    /** Daten laufen ein, obwohl der Handelskalender geschlossen meldet -
+     *  Historie, verzoegerte Kurse oder ein Simulationsfeed. Ein sich
+     *  bewegender Chart sieht sonst nach offenem Markt aus. */
+    marketClosedData: 'Markt geschlossen',
     chooseSymbol: 'Oben ein Instrument waehlen',
     importHistory: 'Historie aus NinjaTrader laden',
     importEmpty: (detail: string) =>

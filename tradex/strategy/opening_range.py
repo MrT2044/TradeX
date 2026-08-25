@@ -47,6 +47,7 @@ from tradex.domain.instruments import Instrument
 from tradex.persistence.models import Reason
 from tradex.strategy.base import Strategy, StrategyOutput, TradeProposal
 from tradex.strategy.signal import StrategyDecision
+from tradex.strategy.stops import max_stop_ticks
 
 OPENING_RANGE_NAME = "opening_range"
 
@@ -221,9 +222,12 @@ class OpeningRangeStrategy(Strategy):
             )
         ]
 
-        # Stopgrenzen gelten fuer jede Strategie gleich (Spec §11).
+        # Stopgrenzen gelten fuer jede Strategie gleich (Spec §11). Die
+        # Obergrenze kommt aus `stops.max_stop_ticks()` - dieselbe Funktion,
+        # die auch die Pflichtkette benutzt.
         stops = self.config.stops
-        if stop_ticks < stops.min_stop_ticks or stop_ticks > stops.max_stop_ticks:
+        erlaubt_max = max_stop_ticks(atr, self.instrument, stops)
+        if stop_ticks < stops.min_stop_ticks or stop_ticks > erlaubt_max:
             code = R.STOP_TOO_TIGHT if stop_ticks < stops.min_stop_ticks else R.STOP_TOO_WIDE
             reasons.append(
                 Reason(
@@ -232,7 +236,12 @@ class OpeningRangeStrategy(Strategy):
                     {
                         "stop_ticks": round(stop_ticks, 1),
                         "min": stops.min_stop_ticks,
-                        "max": stops.max_stop_ticks,
+                        "max": round(erlaubt_max, 1),
+                        # Ohne diese beiden Zahlen liesse sich im Protokoll
+                        # nicht nachvollziehen, WARUM die Grenze gerade dort
+                        # lag - sie ist ja nicht mehr konstant.
+                        "atr_ticks": round(self.instrument.to_ticks(atr), 1),
+                        "atr_mult": stops.max_stop_atr_mult,
                     },
                 )
             )

@@ -113,7 +113,12 @@ def test_positionsgroesse_und_risiko_bleiben_im_budget(
 def test_stopweite_bleibt_in_den_grenzen(engine: StrategyPortfolio, config: Config):
     stops = _tradeable_config(config).stops
     for signal in engine.signals:
-        assert stops.min_stop_ticks <= signal.stop_ticks <= stops.max_stop_ticks, signal
+        # Die Obergrenze haengt jetzt an der ATR zum Signalzeitpunkt und ist
+        # deshalb je Signal eine andere Zahl. Geprueft wird, was ohne diese
+        # ATR noch pruefbar ist: die absolute Untergrenze, und dass ueberhaupt
+        # eine positive Weite herauskam. Die Obergrenze selbst prueft
+        # test_stops_targets.py gegen die ATR, die dort bekannt ist.
+        assert signal.stop_ticks >= stops.min_stop_ticks, signal
 
 
 def test_bestaetigung_kommt_nie_vor_dem_retracement(engine: StrategyPortfolio):

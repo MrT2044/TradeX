@@ -240,14 +240,35 @@ class StopsConfig(_Frozen):
     anchor: Literal["retracement", "sweep", "swing", "fvg"] = "retracement"
     buffer_atr_mult: float = Field(default=0.25, ge=0)
     buffer_min_ticks: float = Field(default=4, ge=0)
-    min_stop_ticks: float = Field(default=8, gt=0)
-    max_stop_ticks: float = Field(default=240, gt=0)
 
-    @model_validator(mode="after")
-    def _range_is_sane(self) -> StopsConfig:
-        if self.min_stop_ticks >= self.max_stop_ticks:
-            raise ValueError("stops.min_stop_ticks muss kleiner als max_stop_ticks sein")
-        return self
+    #: Untergrenze in Ticks. Diese Seite darf absolut bleiben: das Tickraster
+    #: ist absolut, und ein Stop von wenigen Ticks steckt unabhaengig vom
+    #: Kursniveau im Rauschen.
+    min_stop_ticks: float = Field(default=8, gt=0)
+
+    #: Obergrenze als Vielfaches der ATR - NICHT in Ticks.
+    #:
+    #: Hier stand bis zum 25.08.2026 `max_stop_ticks: 240`, und das war ein
+    #: Dimensionsfehler mit Ansage: die Zahl wurde bei MNQ-Kursen um 11.000-17.400
+    #: kalibriert (Stopweiten damals 71-110 Ticks) und nie wieder angefasst.
+    #: Bei 29.200 sind dieselben 240 Ticks nur noch 0,205 % des Kurses statt
+    #: 0,545 %, waehrend die Eroeffnungsspanne allein 249-303 Ticks breit ist.
+    #: Ergebnis: 21 von 21 Live-Entscheidungen mit `stop.too_wide` verworfen,
+    #: drei Tage Papertrading ohne eine einzige Order - ohne Fehlermeldung, weil
+    #: formal alles funktionierte.
+    #:
+    #: Ein ATR-Vielfaches kann so nicht driften: es waechst mit Kursniveau UND
+    #: Volatilitaet. Das ist zugleich die inhaltlich richtigere Frage - ein
+    #: weiter Stop in einem bewegten Markt ist normal, derselbe Stop in einem
+    #: ruhigen Markt ist ein schlechtes Setup.
+    #:
+    #: WICHTIG: Der Wert wurde so gewaehlt, dass er das Verhalten einer
+    #: 500-Tick-Grenze reproduziert (Median-ATR auf 5m lag 2025-2026 bei rund
+    #: 76 Ticks). Er ist NICHT auf Rendite optimiert - der Backtest zeigt ueber
+    #: alle geprueften Werte (240/320/400/500) ein Vertrauensband, das null
+    #: einschliesst. Die Aenderung behebt einen Konfigurationsfehler, sie
+    #: erzeugt keinen Edge.
+    max_stop_atr_mult: float = Field(default=6.0, gt=0)
 
 
 class TargetsConfig(_Frozen):
@@ -472,6 +493,13 @@ class LiveConfig(_Frozen):
     #: Historie weiterlaeuft. Ohne Deckel haengt der Betrieb an einem AddOn,
     #: das den Befehl vielleicht gar nicht kennt - und handelt nie.
     nt8_history_timeout_seconds: float = Field(default=30.0, gt=0)
+
+    #: Wie lange ein Tick die laufende Kerze noch bewegen darf. Danach gilt der
+    #: Kurs als veraltet und die Anzeige-Bar verschwindet, statt eine Bewegung
+    #: vorzutaeuschen, die es nicht mehr gibt. Eine stehende Kerze, die wie eine
+    #: laufende aussieht, ist die gefaehrlichere Anzeige - sie sieht nach Markt
+    #: aus, wo in Wirklichkeit die Verbindung weg ist.
+    display_tick_max_age_seconds: float = Field(default=15.0, gt=0)
 
 
 class BrokerConfig(_Frozen):

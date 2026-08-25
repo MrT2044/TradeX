@@ -10,10 +10,18 @@ zueinander, laeuft das System einwandfrei - und lehnt trotzdem jedes Setup ab:
     Punktwert MNQ     = 2 USD/Punkt
     -> bezahlbarer Stop = 12,5 Punkte = 50 Ticks
 
-Steht `stops.max_stop_ticks` auf 240, erzeugt die Strategie munter Setups mit
-100 Ticks Stop, die die Risk Engine anschliessend ausnahmslos mit
+Erlaubt `stops.max_stop_atr_mult` weitere Stops als das Budget traegt, erzeugt
+die Strategie munter Setups, die die Risk Engine anschliessend ausnahmslos mit
 "Positionsgroesse waere 0" verwirft. Der Nutzer sieht nur, dass nie gehandelt
 wird, und sucht den Fehler an der falschen Stelle.
+
+Am 25.08.2026 ist genau das passiert, und zwar in der schaerferen Variante:
+die Stopgrenze selbst (damals `max_stop_ticks: 240`, absolut) war durch den
+Kursanstieg unerreichbar geworden und verwarf 21 von 21 Setups, bevor das
+Risikobudget ueberhaupt zum Zuge kam. Drei Tage Papertrading, keine Order,
+keine Fehlermeldung. Seitdem ist die Obergrenze relativ zur ATR - und diese
+Pruefung fragt entsprechend, ab WELCHER Marktlage die Rechnung nicht mehr
+aufgeht, statt zwei feste Zahlen zu vergleichen.
 
 Diese Pruefung macht den Widerspruch sichtbar, statt ihn auszurechnen und zu
 verschweigen. Sie aendert AUSDRUECKLICH keine Werte: welche Seite angepasst
@@ -72,20 +80,38 @@ def check_configuration(config: Config, instrument: Instrument) -> list[Consiste
                 ),
             )
         )
-    elif config.stops.max_stop_ticks > affordable:
-        issues.append(
-            ConsistencyIssue(
-                code="risk.max_stop_exceeds_budget",
-                message=(
-                    f"{instrument.symbol}: stops.max_stop_ticks steht auf "
-                    f"{config.stops.max_stop_ticks:.0f}, bezahlbar sind mit "
-                    f"{config.risk.risk_per_trade_amount:.2f} {instrument.currency} "
-                    f"Risiko aber nur {affordable:.0f} Ticks. Setups mit weiterem Stop "
-                    "durchlaufen die ganze Kette und werden am Ende mit "
-                    "'Positionsgroesse 0' verworfen."
-                ),
+    else:
+        # Die Obergrenze ist ein ATR-Vielfaches und damit keine feste Tickzahl
+        # mehr - der Widerspruch laesst sich nicht mehr als "Grenze > Budget"
+        # ausdruecken. Gefragt wird stattdessen: ab welcher ATR sprengt der
+        # erlaubte Stop das Budget?
+        grenz_atr = affordable / config.stops.max_stop_atr_mult
+
+        # Gemeldet wird nur, wenn das schon in der RUHIGSTEN Marktlage
+        # zutrifft, in der ueberhaupt gehandelt wird. Diese Zahl steht bereits
+        # in der Config (`trading_windows.min_atr_ticks`) - damit braucht die
+        # Pruefung keinen eigenen Schwellenwert, den wiederum niemand pflegt.
+        # Trifft es erst bei hoher ATR zu, ist das kein Widerspruch, sondern
+        # normales Verhalten: in wilden Phasen wird seltener gehandelt.
+        ruhigster_handel = config.trading_windows.min_atr_ticks
+        if grenz_atr < ruhigster_handel:
+            issues.append(
+                ConsistencyIssue(
+                    code="risk.max_stop_exceeds_budget",
+                    message=(
+                        f"{instrument.symbol}: bezahlbar sind mit "
+                        f"{config.risk.risk_per_trade_amount:.2f} {instrument.currency} "
+                        f"Risiko nur {affordable:.0f} Ticks Stop. Bei "
+                        f"stops.max_stop_atr_mult = {config.stops.max_stop_atr_mult:g} "
+                        f"ist das bereits ab einer ATR von {grenz_atr:.0f} Ticks "
+                        f"ausgeschoepft - unterhalb der ruhigsten Lage, in der "
+                        f"ueberhaupt gehandelt wird "
+                        f"(trading_windows.min_atr_ticks = {ruhigster_handel:.0f}). "
+                        "Setups durchlaufen damit die ganze Kette und werden am Ende "
+                        "ausnahmslos mit 'Positionsgroesse 0' verworfen."
+                    ),
+                )
             )
-        )
 
     if config.targets.mode == "r_multiple" and config.targets.fallback_r_multiple < config.risk.min_rr:
         issues.append(

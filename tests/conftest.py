@@ -119,7 +119,7 @@ def tradeable_config(config: Config, **overrides: object) -> Config:
             "min_rr": 1.2,
         }
     )
-    stops = StopsConfig(**{**config.stops.model_dump(), "max_stop_ticks": 400})
+    stops = StopsConfig(**{**config.stops.model_dump(), "max_stop_atr_mult": 8.0})
     # Die synthetischen Daten haben keine Sessionstruktur - der Sessionfilter
     # wuerde hier nur zufaellig aussortieren. Er wird in test_risk.py geprueft.
     windows = TradingWindowsConfig(**{**config.trading_windows.model_dump(), "enabled": False})

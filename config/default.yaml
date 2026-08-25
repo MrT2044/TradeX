@@ -222,8 +222,26 @@ stops:
   anchor: retracement             # retracement | sweep | swing | fvg
   buffer_atr_mult: 0.25
   buffer_min_ticks: 4
-  min_stop_ticks: 8               # darunter ist der Stop im Rauschen
-  max_stop_ticks: 240             # darueber ist das Setup zu weit -> ablehnen
+  min_stop_ticks: 8               # darunter ist der Stop im Rauschen (absolut:
+                                  # das Tickraster ist absolut)
+
+  # Obergrenze als ATR-Vielfaches, NICHT in Ticks. Hier stand
+  # `max_stop_ticks: 240` - kalibriert bei MNQ-Kursen um 11.000-17.400 und nie
+  # nachgezogen. Bei 29.200 war dieselbe Zahl unerreichbar geworden (die
+  # Eroeffnungsspanne allein ist dort 249-303 Ticks breit): 21 von 21
+  # Live-Entscheidungen wurden mit `stop.too_wide` verworfen, drei Tage
+  # Papertrading ohne eine einzige Order - fehlerfrei und vollkommen nutzlos.
+  #
+  # 6.0 reproduziert das Verhalten einer 500-Tick-Grenze (Median-ATR auf 5m lag
+  # 2025-2026 bei ~76 Ticks). Bei 500 Ticks ist die Grenze faktisch aus: ein
+  # Kontrolllauf ohne jede Grenze liefert exakt dieselben 624 Trades. Sie wirkt
+  # damit als Ausreisserschutz, nicht als Hauptfilter - so war sie gemeint.
+  #
+  # NICHT auf Rendite optimiert: ueber 240/320/400/500 schliesst das
+  # 95%-Vertrauensband der Expectancy IMMER die Null ein (-0,081 bis -0,001 R,
+  # Profit Factor stets unter 1). Diese Zahl behebt einen Konfigurationsfehler,
+  # sie erzeugt keinen Edge.
+  max_stop_atr_mult: 6.0
 
 # --------------------------------------------------------------- Take Profit
 # Spec §12: kein fester Dollarbetrag. Ziel ist die naechste unberuehrte
@@ -253,8 +271,15 @@ trading_windows:
 
 risk:
   enabled: true
-  account_size: 10000.0
-  risk_per_trade_pct: 0.25        # 25 USD bei 10.000 USD Konto
+  # Entspricht dem NinjaTrader-Simulationskonto Sim101 (SimulatorInitialCash
+  # = 100.000 USD, am 25.08.2026 aus NinjaTraders eigener Datenbank gelesen).
+  # Vorher standen hier 10.000 - eine Zahl, die zu keinem real bespielten Konto
+  # gehoerte. Folge: 0,25 % ergaben 25 USD je Trade, bei MNQ (tick_value 0,50)
+  # also hoechstens 50 Ticks Stop. Beobachtet wurden 254-367 Ticks, weil der
+  # Stop am Rand der Eroeffnungsspanne haengt. Die Positionsgroesse fiel damit
+  # auf 0 und es entstand kein einziger Trade.
+  account_size: 100000.0
+  risk_per_trade_pct: 0.25        # 250 USD bei 100.000 USD Konto
   max_daily_loss_pct: 1.0
   max_trades_per_day: 3
   max_open_positions: 1
@@ -349,6 +374,11 @@ live:            # Phase 5/8 - Betriebsparameter, keine Handelsregeln
   # Start lange braucht. 0 schaltet das Nachladen ab.
   nt8_history_days: 3
   nt8_history_timeout_seconds: 30.0
+  # Die laufende Kerze wird aus Ticks gebaut - sie ist reine Anzeige und geht
+  # in keine Analyse ein. Bleiben die Ticks laenger als das aus, verschwindet
+  # sie wieder: eine stehende Kerze, die wie eine laufende aussieht, sieht nach
+  # Markt aus, wo in Wirklichkeit die Verbindung weg ist.
+  display_tick_max_age_seconds: 15.0
 
 broker:          # Phase 8 - Orderanbindung an Interactive Brokers (Paper)
   # AUS bedeutet: es entstehen keine Orders. Signale werden weiterhin intern

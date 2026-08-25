@@ -7,21 +7,28 @@
 #
 #  WARUM ES DIESE DATEI GIBT
 #  -------------------------
-#  Mit 10.000 USD und 0,25 % Risiko sind 25 USD je Trade erlaubt. MNQ kostet
-#  2 USD je Punkt - der groesste bezahlbare Stop ist damit 12,5 Punkte
-#  (50 Ticks). Gemessen ueber 2023-2026 scheiterten daran 149 von rund 310
-#  vollstaendigen Setups: fast die Haelfte, bevor die Regel ueberhaupt
-#  beurteilt werden konnte.
+#  Das Risikobudget begrenzt die bezahlbare Stopweite: Budget geteilt durch
+#  den Tickwert des Instruments. Ist es zu klein, scheitern Setups an der
+#  Positionsgroesse, bevor die Regel ueberhaupt beurteilt werden konnte - bei
+#  10.000 USD und 0,25 % waren das 25 USD, also nur 50 Ticks bei MNQ, und
+#  ueber 2023-2026 scheiterten daran 149 von rund 310 vollstaendigen Setups.
 #
 #  Diese Datei beantwortet deshalb genau EINE Frage: Hat die Regelmechanik
 #  einen statistischen Edge, wenn das Risikobudget nicht der begrenzende
 #  Faktor ist? Sie sagt NICHTS darueber, mit welchem Konto man das handeln
 #  kann - das ist eine getrennte Frage und wird ueber default.yaml beantwortet.
 #
-#  EINZIGER UNTERSCHIED ZU default.yaml: risk.account_size (10.000 -> 25.000).
+#  EINZIGER UNTERSCHIED ZU default.yaml: risk.account_size.
 #  Alle Schwellenwerte der Strategie bleiben unveraendert. Ein Test prueft das
 #  (tests/test_config_and_persistence.py) - ohne ihn wuerde die Datei mit der
 #  Zeit unbemerkt auseinanderlaufen und eine zweite Regelfassung werden.
+#
+#  Der Wert MUSS ueber dem in default.yaml liegen, sonst kehrt sich der Zweck
+#  der Datei um. Genau das drohte am 25.08.2026: default.yaml stieg von 10.000
+#  auf 100.000 (Groesse des NinjaTrader-Simulationskontos Sim101), womit die
+#  hier stehenden 25.000 ploetzlich das ENGERE Budget gewesen waeren - eine
+#  Messkonfiguration, die knapper rechnet als der Betrieb, misst das Gegenteil
+#  dessen, wofuer sie gebaut wurde.
 # ============================================================================
 # ============================================================================
 #  TradeX - zentrale Konfiguration
@@ -216,7 +223,7 @@ stops:
   buffer_atr_mult: 0.25
   buffer_min_ticks: 4
   min_stop_ticks: 8               # darunter ist der Stop im Rauschen
-  max_stop_ticks: 240             # darueber ist das Setup zu weit -> ablehnen
+  max_stop_atr_mult: 6.0          # muss default.yaml entsprechen - siehe Kopf
 
 # --------------------------------------------------------------- Take Profit
 # Spec §12: kein fester Dollarbetrag. Ziel ist die naechste unberuehrte
@@ -246,8 +253,9 @@ trading_windows:
 
 risk:
   enabled: true
-  account_size: 25000.0        # abweichend von default.yaml - siehe Kopf
-  risk_per_trade_pct: 0.25        # 25 USD bei 10.000 USD Konto
+  account_size: 250000.0          # abweichend von default.yaml - siehe Kopf.
+                                  # Muss GROESSER als dort sein (dort 100.000).
+  risk_per_trade_pct: 0.25        # 625 USD - Budget ist hier nie der Engpass
   max_daily_loss_pct: 1.0
   max_trades_per_day: 3
   max_open_positions: 1

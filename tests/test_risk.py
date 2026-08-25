@@ -10,7 +10,7 @@ import math
 import pytest
 
 from tradex.analysis import reasons as R
-from tradex.config import Config, RiskConfig, StopsConfig, TargetsConfig, TradingWindowsConfig
+from tradex.config import Config, RiskConfig, TargetsConfig, TradingWindowsConfig
 from tradex.domain.enums import Direction, SessionName
 from tradex.domain.instruments import Instrument
 from tradex.risk.consistency import affordable_stop_ticks, check_configuration
@@ -29,6 +29,23 @@ def _risk(config: Config, **overrides) -> RiskConfig:
 
 def _config_with(config: Config, **sections) -> Config:
     return Config(**{**config.model_dump(), **sections})
+
+
+def _kleines_konto(config: Config) -> Config:
+    """Konto mit 10.000 USD - der Zustand, den die Grenzwerttests brauchen.
+
+    Diese Zahl stand frueher in `default.yaml` und die Tests unten verliessen
+    sich stillschweigend darauf. Das ist genau der Fehler, den CLAUDE.md
+    verbietet: wer einen Zustand prueft, stellt ihn her. Als das Konto auf die
+    Groesse des Simulationskontos angehoben wurde (100.000, siehe
+    `risk.account_size`), fielen sechs Tests auf einmal - nicht weil die Regel
+    kaputt war, sondern weil sie eine Annahme ueber die Auslieferungsdatei
+    trafen.
+
+    Bei 10.000 USD gilt: 0,25 % = 25 USD je Trade, `max_daily_loss_pct` 1,0 =
+    100 USD am Tag. Auf diesen beiden Zahlen ruht die Arithmetik der Tests.
+    """
+    return _config_with(config, risk=_risk(config, account_size=10_000.0))
 
 
 # ------------------------------------------------------------ Positionsgroesse
@@ -88,7 +105,7 @@ def test_nq_braucht_groesseres_konto_als_mnq(config: Config, instruments: dict[s
 # -------------------------------------------------------------------- Grenzen
 def test_tagesverlustlimit_stoppt_weitere_trades(config: Config, mnq: Instrument):
     ledger = RiskLedger()
-    engine = RiskEngine(config, mnq, ledger)
+    engine = RiskEngine(_kleines_konto(config), mnq, ledger)
 
     assert engine.evaluate(5.0, SESSION, ATR, DAY).approved
 
@@ -132,7 +149,7 @@ def test_maximale_trades_pro_tag(config: Config, mnq: Instrument):
 def test_grenze_gilt_je_handelstag(config: Config, mnq: Instrument):
     """Ein neuer Handelstag setzt Zaehler und Verlust zurueck."""
     ledger = RiskLedger()
-    engine = RiskEngine(config, mnq, ledger)
+    engine = RiskEngine(_kleines_konto(config), mnq, ledger)
     ledger.open_position(
         OpenPosition(1, Direction.BULLISH, 0, 21000.0, 20995.0, 21015.0, 1, 25.0), DAY
     )
@@ -198,7 +215,7 @@ def test_handelsfenster_abschaltbar(config: Config, mnq: Instrument):
 def test_reihenfolge_der_ablehnungsgruende(config: Config, mnq: Instrument):
     """Harte Sperren zuerst: bei erreichtem Tagesverlust ist die Session egal."""
     ledger = RiskLedger()
-    engine = RiskEngine(config, mnq, ledger)
+    engine = RiskEngine(_kleines_konto(config), mnq, ledger)
     ledger.open_position(
         OpenPosition(1, Direction.BULLISH, 0, 21000.0, 20995.0, 21015.0, 1, 25.0), DAY
     )
@@ -211,24 +228,55 @@ def test_reihenfolge_der_ablehnungsgruende(config: Config, mnq: Instrument):
 # ----------------------------------------------------------------- Konsistenz
 def test_bezahlbare_stopweite(config: Config, mnq: Instrument):
     """25 USD Budget / 2 USD je Punkt = 12.5 Punkte = 50 Ticks."""
-    assert math.isclose(affordable_stop_ticks(config, mnq), 50.0)
+    assert math.isclose(affordable_stop_ticks(_kleines_konto(config), mnq), 50.0)
+
+
+def test_bezahlbare_stopweite_waechst_mit_dem_konto(config: Config, mnq: Instrument):
+    """Dieselbe Rechnung am Simulationskonto: 250 USD Budget -> 500 Ticks.
+
+    Der Test steht hier, weil genau diese Groesse drei Tage Papertrading ohne
+    eine einzige Order erzeugt hat: bei 10.000 USD sind 50 Ticks bezahlbar, die
+    beobachteten Stops lagen bei 254-367 Ticks, und die Positionsgroesse fiel
+    auf 0. Die Zahl ist damit keine Nebensache, sondern der Unterschied
+    zwischen einem handelnden und einem stummen System.
+    """
+    gross = _config_with(config, risk=_risk(config, account_size=100_000.0))
+    assert math.isclose(affordable_stop_ticks(gross, mnq), 500.0)
 
 
 def test_widerspruch_max_stop_gegen_budget_wird_gemeldet(config: Config, mnq: Instrument):
     """Genau der Fall, der beim ersten Strategielauf 22 von 24 Setups verwarf.
 
-    Die Konfiguration erlaubt 240 Ticks Stop, bezahlbar sind aber nur 50. Ohne
-    diese Meldung sucht man den Fehler an der falschen Stelle.
+    Gemeldet wird, wenn der erlaubte Stop schon in der RUHIGSTEN handelbaren
+    Marktlage unbezahlbar ist - dann kann ueber die gesamte Bandbreite, in der
+    ueberhaupt gehandelt wird, kein Trade entstehen.
+
+    Hier: 5.000 USD Konto -> 12,50 USD Budget -> 25 Ticks bezahlbar. Bei
+    `max_stop_atr_mult` 6 waere das schon ab ATR 4,2 Ticks ausgeschoepft, und
+    gehandelt wird erst ab ATR 8 (`trading_windows.min_atr_ticks`).
+
+    Zur Einordnung, warum hier 5.000 und nicht 10.000 steht: mit 10.000 USD
+    ergaeben sich 50 bezahlbare Ticks und damit eine Grenz-ATR von 8,3 - knapp
+    UEBER der ruhigsten handelbaren Lage. Diese Konfiguration ist also nicht
+    mehr garantiert handlungsunfaehig. Mit der frueheren absoluten Grenze von
+    240 Ticks war sie es; das ist genau der Unterschied, den die Umstellung auf
+    ein ATR-Vielfaches ausmacht.
     """
-    issues = check_configuration(config, mnq)
+    winzig = _config_with(config, risk=_risk(config, account_size=5_000.0))
+    issues = check_configuration(winzig, mnq)
     codes = {i.code for i in issues}
     assert "risk.max_stop_exceeds_budget" in codes
 
 
 def test_stimmige_konfiguration_meldet_nichts(config: Config, mnq: Instrument):
-    stops = StopsConfig(**{**config.stops.model_dump(), "max_stop_ticks": 50})
-    tuned = _config_with(config, stops=stops)
-    assert check_configuration(tuned, mnq) == []
+    """Bei 100.000 USD Konto traegt das Budget die erlaubte Stopweite muehelos.
+
+    Rechnung: 250 USD / 0,50 USD je Tick = 500 Ticks bezahlbar. Bei
+    `max_stop_atr_mult` 6 waere das erst ab einer ATR von rund 83 Ticks
+    ausgeschoepft - weit ueber `trading_windows.min_atr_ticks`. Kein Widerspruch,
+    also keine Meldung.
+    """
+    assert check_configuration(config, mnq) == []
 
 
 def test_unbezahlbarer_mindeststop_ist_ein_fehler(config: Config, mnq: Instrument):

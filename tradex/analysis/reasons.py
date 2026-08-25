@@ -56,6 +56,10 @@ SETUP_COMPLETE: Final = "setup.complete"
 STOP_PLACED: Final = "stop.placed"
 STOP_TOO_WIDE: Final = "stop.too_wide"
 STOP_TOO_TIGHT: Final = "stop.too_tight"
+#: Die Obergrenze ist ein ATR-Vielfaches und ohne belastbare ATR nicht
+#: beurteilbar. Eigener Code statt "zu weit": sonst stuende im Protokoll ein
+#: Grund, der nicht zutrifft, und die Suche liefe in die falsche Richtung.
+STOP_NO_ATR: Final = "stop.no_atr"
 
 # --- Take Profit (Spec §12) -------------------------------------------------
 TARGET_LIQUIDITY: Final = "target.liquidity"
@@ -148,6 +152,7 @@ ALL_CODES: Final[tuple[str, ...]] = (
     STOP_PLACED,
     STOP_TOO_WIDE,
     STOP_TOO_TIGHT,
+    STOP_NO_ATR,
     TARGET_LIQUIDITY,
     TARGET_FALLBACK,
     TARGET_NONE,

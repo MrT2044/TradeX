@@ -67,8 +67,18 @@ def test_messkonfiguration_weicht_nur_beim_konto_ab():
     standard = load_config(PROJECT_ROOT / "config" / "default.yaml").model_dump()
     variant = load_config(PROJECT_ROOT / "config" / "backtest_edge.yaml").model_dump()
 
-    assert variant["risk"]["account_size"] == 25_000.0
-    assert standard["risk"]["account_size"] == 10_000.0
+    # Geprueft wird die Beziehung der beiden Dateien, NICHT ihr Inhalt. Hier
+    # standen frueher die Betraege selbst (10.000 / 25.000) - dadurch riss der
+    # Test, sobald das Konto an die Groesse des Simulationskontos angepasst
+    # wurde, obwohl die Invariante die ganze Zeit erfuellt war. Ein Test, der
+    # den Auslieferungszustand festschreibt, verbietet Aenderungen, statt
+    # Fehler zu finden.
+    assert variant["risk"]["account_size"] > standard["risk"]["account_size"], (
+        "Die Messkonfiguration muss das GROESSERE Konto haben - sie soll die Edge-Frage "
+        "vom Budget trennen. Ist sie knapper als der Betrieb, misst sie das Gegenteil. "
+        "Genau das drohte, als default.yaml von 10.000 auf 100.000 stieg und hier "
+        "25.000 stehen blieben."
+    )
 
     standard["risk"] = {**standard["risk"], "account_size": None}
     variant["risk"] = {**variant["risk"], "account_size": None}

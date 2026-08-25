@@ -38,6 +38,8 @@ Risikopruefung. Ausfuehrung ist Phase 5 und spaeter.
 
 from __future__ import annotations
 
+import math
+
 from tradex.analysis import reasons as R
 from tradex.analysis.context import MarketContext, TimeframeUpdate
 from tradex.analysis.displacement import Displacement
@@ -50,7 +52,7 @@ from tradex.persistence.models import Reason
 from tradex.strategy.base import Strategy, StrategyOutput, TradeProposal
 from tradex.strategy.setup import SetupCandidate, SetupStage
 from tradex.strategy.signal import StrategyDecision
-from tradex.strategy.stops import place_stop
+from tradex.strategy.stops import max_stop_ticks, place_stop
 from tradex.strategy.targets import place_target
 
 log = get_logger(__name__)
@@ -406,7 +408,14 @@ class ChainStrategy(Strategy):
             candidate, entry_price, atr, self.instrument, self.config.stops, swing
         )
         if not stop.ok:
-            code = R.STOP_TOO_TIGHT if stop.rejection == "too_tight" else R.STOP_TOO_WIDE
+            # Drei Ablehnungsgruende, drei Codes. "no_atr" darf nicht als
+            # "zu weit" durchgehen: die Weite war nie das Problem, sie liess
+            # sich nur nicht beurteilen.
+            code = {
+                "too_tight": R.STOP_TOO_TIGHT,
+                "no_atr": R.STOP_NO_ATR,
+            }.get(stop.rejection, R.STOP_TOO_WIDE)
+            erlaubt_max = max_stop_ticks(atr, self.instrument, self.config.stops)
             collected.append(
                 Reason(
                     code,
@@ -414,7 +423,11 @@ class ChainStrategy(Strategy):
                     {
                         "stop_ticks": round(stop.distance_ticks, 1),
                         "min": self.config.stops.min_stop_ticks,
-                        "max": self.config.stops.max_stop_ticks,
+                        "max": round(erlaubt_max, 1),
+                        "atr_ticks": round(self.instrument.to_ticks(atr), 1)
+                        if math.isfinite(atr)
+                        else None,
+                        "atr_mult": self.config.stops.max_stop_atr_mult,
                     },
                 )
             )
