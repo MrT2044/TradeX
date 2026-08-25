@@ -27,6 +27,15 @@ eine Spezifikation allein nicht findet:
 - **Port 36973 war belegt**: das ist NinjaTraders eigener ATI-Port. Die Bridge
   wäre dort nie hochgekommen
 
+**Nachgetragen (24.08.2026):** das AddOn abonniert jetzt Marktdaten und sendet
+`tick`-Nachrichten. Vorher gab es die Produzentenseite dieses Protokollteils
+gar nicht — der Python-Client konnte Ticks lesen, das AddOn erzeugte aber
+keine, und im Betrieb standen bei tausenden Bars `ticks_seen = 0` und
+`last_price = {}`. Die Tests waren trotzdem grün, weil sie die Ticks selbst
+einspeisten. `tests/test_bridge_contract.py` prüft seitdem den Quelltext des
+AddOns gegen dieses Dokument. **Gegen ein laufendes NinjaTrader ist das noch
+nicht bestätigt.**
+
 **Was noch offen ist:** Bars bei geöffneter Börse. Der Nachweis oben lief über
 den `history`-Befehl, weil am Wochenende keine Bars schließen. Und: das
 Wurzelsymbol muss über `nt8_symbol` in `config/instruments.yaml` auf den
@@ -106,12 +115,36 @@ Architektur-Invariante 1: Analysiert wird ausschließlich auf geschlossenen Bars
 `contract` ist der laufende Kontraktname. Wechselt er, setzt die Python-Seite
 `roll_boundary=True` — siehe `tradex/data/rolls.py`.
 
-### `tick` — Einzelgeschäft (optional)
+### `tick` — Einzelgeschäft
 
 ```json
-{"type":"tick","symbol":"MNQ","ts":1740000000000000000,
- "price":21003.00,"size":2,"bid":21002.75,"ask":21003.00}
+{"type":"tick","symbol":"MNQ","ts":1740000000000000000,"price":21003.00,"size":2}
 ```
+
+Kommt aus `Instrument.MarketData.Update`, gefiltert auf `MarketDataType.Last` —
+also der zuletzt **gehandelte** Preis, nicht Bid oder Ask. Diese Zahl geht auf
+der Python-Seite in **keinen Detektor und keine Entscheidung** ein. Sie füllt
+`last_price` und die laufende Kerze (`NinjaTraderFeed.live_bar()`), und beides
+ist reine Anzeige.
+
+Warum es sie geben muss: das AddOn sendet ausschließlich *geschlossene* Bars.
+Um 14:21:36 ist die letzte davon die von 14:20 — die Minute, die gerade läuft,
+kennt TradeX sonst überhaupt nicht, und der Chart hängt dauerhaft eine Minute
+zurück.
+
+**Drei Eigenschaften des Sendewegs**, die zum Protokoll gehören:
+
+- Ticks werden **zusammengefasst**: ein noch nicht gesendeter Tick wird durch
+  den nächsten ersetzt. Ein Client bekommt also nicht jeden Tick, sondern immer
+  den neuesten. Für eine Kursanzeige ist das richtig; wer jeden einzelnen Tick
+  bräuchte, bekäme ihn hier nicht.
+- Gesendet wird höchstens alle 50 ms je Symbol (`TickIntervalMs`).
+- **Bars werden nie zusammengefasst.** Dort wäre jeder verworfene Datensatz ein
+  stiller Datenverlust.
+
+Ein Instrument, das auf zwei Zeitebenen abonniert ist, erzeugt **einen**
+Tickstrom — die Abonnements sind gezählt (`RefCount`), und `unsubscribe` gibt
+den Handler erst beim letzten frei.
 
 ### `status` — Verbindungszustand
 
@@ -125,8 +158,13 @@ Alle 5 Sekunden. Bleibt er länger als 15 Sekunden aus, gilt der Feed als
 verloren: **keine neuen Trades** (Spec §24).
 
 ```json
-{"type":"heartbeat","ts":1740000000000000000}
+{"type":"heartbeat","ts":1740000000000000000,"dropped":0}
 ```
+
+`dropped` zählt Nachrichten, die eine übergelaufene Sendewarteschlange
+verworfen hat. Praktisch immer 0 — steht dort etwas anderes, hat ein Client
+nicht mehr gelesen, und ein Teil des Datenstroms fehlt. Ein Überlauf, den
+niemand meldet, sieht von außen aus wie ein ruhiger Markt.
 
 ## Nachrichten: Python → AddOn
 
@@ -146,19 +184,195 @@ Nachrichten, abgeschlossen durch `history_end`.
  "from":1740000000000000000,"to":1740086400000000000}
 ```
 
-## Order-Ausführung (Phase 8/9)
+## Order-Ausführung (Phase 9)
 
-Orders laufen **nicht** über diesen Socket, sondern über die ATI-Schnittstelle
-(`NinjaTrader.Client.dll`). Gründe:
+> **Diese Section ersetzt die frühere Festlegung „Orders laufen über ATI".**
+> Was daran richtig war und was nicht, steht unten unter *Warum nicht ATI* —
+> die alte Begründung wird nicht stillschweigend überschrieben.
 
-1. Sie ist von NinjaTrader dafür vorgesehen und dokumentiert.
-2. Order-Routing bleibt damit vom selbstgebauten Datenpfad getrennt — ein Fehler
-   im Bar-Streaming kann keine Order auslösen.
+Seit Phase 9 ist NinjaTrader **beide** Seiten: Marktdaten *und* Ausführung.
 
-Bis Phase 8 wird diese Seite gar nicht angefasst. Live-Trading ist per Konfiguration
-standardmäßig deaktiviert und lässt sich nur mit einer zweiten, ausdrücklichen
-Bestätigung einschalten (`execution.live_trading_enabled`, geprüft in
-`tradex/config.py`).
+```
+NinjaTrader → Marktdaten → TradeX → Analyse/Strategie → Order → NinjaTrader
+```
+
+Getragen wird das von derselben In-Prozess-API, die jede NinjaScript-Strategie
+benutzt — `NinjaTrader.Cbi` (`Account`, `Order`, `Execution`, `Position`). Das
+AddOn importiert diesen Namespace ohnehin bereits.
+
+### Warum nicht ATI
+
+Die alte Festlegung nannte zwei Gründe, und **einer davon gilt weiter**:
+
+| Argument von damals | Stand heute |
+|---|---|
+| „ATI ist dafür vorgesehen und dokumentiert" | Stimmt, reicht aber nicht: ATI kennt **keinen Order-Lifecycle**. Es gibt kein `Accepted`/`Working`/`PartiallyFilled`, keine Ausführungspreise je Teilfüllung, keine Positions- oder Kontoereignisse. Genau das ist aber die geforderte Rückmeldung. |
+| „Order-Routing bleibt vom Datenpfad getrennt" | **Bleibt ein echter Verlust.** Beide Wege teilen sich jetzt einen Socket. |
+
+Der zweite Punkt wird nicht weggeredet, sondern **anders abgesichert**:
+
+- **Whitelist statt Default-Zweig.** `HandleCommand` kennt eine feste Liste von
+  Befehlen und verwirft alles andere wortlos. Eine verstümmelte `bar`-Zeile
+  kann nicht versehentlich als Order gelesen werden — sie passt auf keinen
+  Befehlsnamen.
+- **`order_key` ist Pflicht.** Ohne ihn wird nicht gesendet. Ein zufällig
+  zusammengesetzter Puffer hat keinen.
+- **Nur Simulationskonten.** Siehe unten — das AddOn lehnt jedes andere Konto
+  ab, unabhängig davon, was Python schickt.
+- **Getrennte Warteschlangen.** Order-Ereignisse werden nie zusammengefasst,
+  Kursticks immer. Sie teilen sich die Leitung, nicht die Behandlung.
+
+### Kontoschutz: der Nachweis liegt im AddOn, nicht in Python
+
+Orders werden **ausschließlich** auf ein Konto mit
+`account.Connection.Options.Provider == Provider.Simulator` angenommen. Jede
+andere Verbindung wird mit `order_rejected` und Reason-Code beantwortet, bevor
+irgendetwas an NinjaTrader geht.
+
+**Es gibt dafür keinen Schalter.** Nicht in `default.yaml`, nicht in `.env`,
+nicht als Kommandozeilenargument. Das ist der Unterschied zur bisherigen
+IBKR-Anbindung, wo der Paper-Nachweis strukturell indirekt bleiben musste
+(Port + `DU`-Präfix + Allowlist): `Provider.Simulator` ist eine **Eigenschaft
+des Kontos**, keine Namenskonvention.
+
+Die Prüfung steht bewusst **doppelt** — hier im AddOn und in
+`tradex/broker/guard.py`. Eine Sicherheitskette, die nur auf der Seite läuft,
+die man selbst kontrolliert, prüft die Grenze nicht, sondern beschreibt sie.
+
+### Nachrichten: Python → AddOn
+
+#### `order_submit`
+
+Entry mit optionaler Klammer. Stop und Ziel gehen als **echte Orders** an
+NinjaTrader — nicht als interne Merkposten. Der Grund ist derselbe wie bei
+IBKR: sie müssen auch dann wirken, wenn TradeX nicht läuft.
+
+```json
+{"type":"order_submit","order_key":"S17-4","symbol":"MNQ","account":"Sim101",
+ "side":"BUY","quantity":2,"kind":"MARKET","limit_price":0,
+ "stop_loss":29180.25,"take_profit":29310.50}
+```
+
+`order_key` ist der Duplikatschutz aus `tradex/broker/types.py` und überlebt
+Prozessneustarts. Kommt derselbe Schlüssel zweimal, wird die zweite Nachricht
+**abgelehnt, nicht ausgeführt** — auch dann, wenn die erste Order längst
+geschlossen ist. Die interne `trade_id` allein taugt dafür nicht: das
+Risikobuch lebt im Speicher und zählt nach einem Neustart wieder bei 1.
+
+Die Klammerorders tragen `order_key#stop` bzw. `order_key#target`
+(`order_ref()` in `types.py`) — der einzige Faden, an dem sich nach einem
+Verbindungsabriss wiederfinden lässt, welche fremde Order zu welchem eigenen
+Signal gehört.
+
+#### `order_cancel`
+
+```json
+{"type":"order_cancel","order_key":"S17-4"}
+```
+
+Storniert Entry **und** beide Klammerorders. Eine stornierte Entry-Order, deren
+Stop stehen bleibt, wäre eine Order ohne Position.
+
+#### `flatten` — der NOTAUS-Weg
+
+```json
+{"type":"flatten","account":"Sim101","symbol":"MNQ"}
+```
+
+Ohne `symbol`: alles. Storniert erst alle offenen Orders, stellt dann glatt —
+in dieser Reihenfolge, sonst löst eine noch stehende Klammerorder auf der
+glattgestellten Position eine Gegenposition aus.
+
+#### `account_query`
+
+```json
+{"type":"account_query"}
+```
+
+Beantwortet mit `account` (siehe unten). Fragt **nicht** blockierend nach:
+TradeX' Statusabfragen dürfen nie auf den Broker warten.
+
+### Nachrichten: AddOn → Python
+
+#### `order_update` — Zustandswechsel
+
+```json
+{"type":"order_update","order_key":"S17-4","order_id":"a91f...","ts":1740000000000000000,
+ "state":"working","filled_quantity":0,"avg_fill_price":0,"error":""}
+```
+
+`state` bildet NinjaTraders `OrderState` auf die Werte aus
+`tradex/broker/types.py` ab:
+
+| NinjaTrader | TradeX |
+|---|---|
+| `Submitted`, `PendingSubmit` | `submitted` |
+| `Accepted` | `accepted` |
+| `Working` | `accepted` |
+| `PartFilled` | `partially_filled` |
+| `Filled` | `filled` |
+| `Cancelled`, `PendingCancel` | `cancelled` |
+| `Rejected` | `rejected` |
+| `Unknown` | `inactive` |
+
+**`Working` wird bewusst auf `accepted` abgebildet** und nicht auf einen
+eigenen Zustand: für TradeX ist die Frage „liegt sie an der Börse und kann
+sich noch ändern?", und die beantworten beide gleich (`is_live`). Ein
+zusätzlicher Zustand im brokerunabhängigen Enum wäre ein NinjaTrader-Begriff
+an einer Stelle, die keine kennen soll.
+
+#### `execution` — eine einzelne Füllung
+
+```json
+{"type":"execution","order_key":"S17-4","exec_id":"e77b...","ts":1740000000000000000,
+ "quantity":1,"price":29245.75,"commission":0.37}
+```
+
+Teilfüllungen liefern mehrere. **Diese Nachrichten werden nie
+zusammengefasst** — anders als Ticks. Ein verworfener Tick kostet einen
+Kursstand, eine verworfene Füllung erzeugt eine Position, die TradeX nicht
+kennt.
+
+#### `position` — Position, wie NinjaTrader sie sieht
+
+```json
+{"type":"position","account":"Sim101","symbol":"MNQ","quantity":-2,
+ "avg_price":29245.75,"unrealized_pnl":-31.50}
+```
+
+`quantity` ist vorzeichenbehaftet (negativ = short). Diese Zahl ist absichtlich
+**getrennt** vom internen Risikobuch: die Differenz zwischen beiden ist genau
+die Information, die man nach einem Verbindungsabriss braucht.
+
+#### `account`
+
+```json
+{"type":"account","name":"Sim101","provider":"Simulator","is_simulation":true,
+ "currency":"USD","net_liquidation":100000.00,"buying_power":100000.00,
+ "realized_pnl":0.0}
+```
+
+`is_simulation` kommt aus `Provider.Simulator` und ist der Paper-Nachweis, auf
+den sich `guard.py` stützt.
+
+#### `order_rejected` — abgelehnt, bevor etwas hinausging
+
+```json
+{"type":"order_rejected","order_key":"S17-4","code":"account_not_simulated",
+ "detail":"Konto Playback101 hat Provider=Playback"}
+```
+
+Reason-Codes, keine Sätze — dieselbe Konvention wie im übrigen System, `de.ts`
+übersetzt sie. Codes: `account_not_simulated`, `account_unknown`,
+`instrument_unknown`, `duplicate_order_key`, `quantity_invalid`,
+`bracket_invalid`, `not_connected`.
+
+### Live-Trading
+
+Unverändert gesperrt. `execution.live_trading_enabled` steht auf `false`, und
+die Sicherheitskette in `tradex/broker/guard.py` verweigert jeden Live-Modus
+strukturell (`BROKER_LIVE_BLOCKED`). Phase 9 ist Paper über
+`Provider.Simulator` — mehr nicht.
 
 ## Umsetzungsschritte für Phase 5
 
@@ -193,6 +407,17 @@ verschoben — ein Fehler, der nirgends knallt.
 **`BarsRequest` meldet auch die laufende Bar.** Das AddOn sendet deshalb erst,
 wenn die *nächste* Bar begonnen hat (`bars.Count - 2`). Würde die laufende Bar
 hinausgehen, sähe die Engine live einen Zustand, den sie im Backtest nie sieht.
+
+**Das ist zugleich der Grund für die Ticks.** Weil nur geschlossene Bars
+hinausgehen, kennt TradeX die laufende Minute nicht — sie wird aus Ticks
+zusammengesetzt, in `NinjaTraderFeed` und `TradexService.display_bar()`, und
+ausschließlich zur Anzeige. Die Trennung ist die ganze Pointe: `bar` geht in
+die Analyse, `tick` nie.
+
+**Der Marktdaten-Callback darf nicht selbst senden.** Ein `Write` auf einen
+TCP-Socket kann blockieren; im Callback hinge dann bei hoher Tickrate der
+Datenfaden von NinjaTrader an einem langsamen Leser. Deshalb Warteschlange und
+eigener Sendefaden (`SendLoop`).
 
 ### Das Wurzelsymbol muss abgebildet werden
 
@@ -232,3 +457,19 @@ Feed übersetzt in beide Richtungen; die Sitzung sieht weiterhin nur `MNQ`.
 - [ ] Ein Kontraktwechsel kommt als `roll_boundary` an *(im Python-Client
       getestet, in NinjaTrader erst beim nächsten Roll beobachtbar)*
 - [ ] Ein Neustart des AddOns erzeugt keine doppelten oder fehlenden Bars
+- [x] **`ticks_seen` steigt fortlaufend, `last_price` ist gesetzt** *(24.08.2026,
+      NT 8.1.8.2: 341 Ticks in 20 s über die Bridge, `/api/watch` meldete
+      `ticks_seen=1583`, `last_price=29228.75`, `malformed=0`; Kontraktname
+      `MNQ SEP26` korrekt nach `MNQ` zurückübersetzt)*
+- [x] Die laufende Kerze gehört zur aktuellen Minute und bewegt sich
+      *(`/api/bars` lieferte auf 1m drei aufeinanderfolgende Minuten — letzte
+      geschlossene, `forming`, `live`; auf 5m lagen `forming` und `live` im
+      selben Bucket und wurden verschmolzen)*
+- [ ] **Ticks aus einem ECHTEN Datenfeed.** Der Nachweis oben lief gegen
+      NinjaTraders Verbindung **„Simulation"** — synthetische Kurse (im Log:
+      `Simulation: Primary connection=Connected, Price feed=Connected`). Der
+      Weg ist damit vollständig belegt, die *Kurse* sind es nicht: eine
+      Bewegung von 88 Punkten je Minute hat MNQ nicht. Für echte Ticks braucht
+      es eine Datenverbindung mit CME Level 1 (~4 USD/Monat, siehe Kosten
+      oben). Historische Bars über `history` kommen dagegen schon jetzt echt
+      vom HDS.
