@@ -298,22 +298,33 @@ TradeX' Statusabfragen dürfen nie auf den Broker warten.
 
 ```json
 {"type":"order_update","order_key":"S17-4","order_id":"a91f...","ts":1740000000000000000,
- "state":"working","filled_quantity":0,"avg_fill_price":0,"error":""}
+ "state":"accepted","filled_quantity":0,"avg_fill_price":0,"error":""}
 ```
 
-`state` bildet NinjaTraders `OrderState` auf die Werte aus
-`tradex/broker/types.py` ab:
+`order_id` ist eine **Zeichenkette** (NinjaTrader vergibt GUIDs). `BrokerOrder`
+rechnet mit `int`; die Übersetzung macht der Python-Adapter, weil sie Zustand
+braucht.
+
+`state` trägt bereits die TradeX-Werte — das AddOn bildet NinjaTraders
+`OrderState` in `MapOrderState()` ab, die Python-Seite liest nur noch ein. Eine
+zweite Abbildung wäre eine zweite Wahrheit:
 
 | NinjaTrader | TradeX |
 |---|---|
-| `Submitted`, `PendingSubmit` | `submitted` |
-| `Accepted` | `accepted` |
-| `Working` | `accepted` |
+| `Initialized`, `Submitted` | `submitted` |
+| `Accepted`, `Working`, `ChangePending`, `ChangeSubmitted`, `TriggerPending` | `accepted` |
 | `PartFilled` | `partially_filled` |
 | `Filled` | `filled` |
-| `Cancelled`, `PendingCancel` | `cancelled` |
+| `CancelPending`, `CancelSubmitted`, `Cancelled` | `cancelled` |
 | `Rejected` | `rejected` |
-| `Unknown` | `inactive` |
+| alles übrige | `inactive` |
+
+Die Namen sind gegen den Compiler geprüft: `PendingSubmit` und `PendingCancel`
+standen ursprünglich hier und **gibt es in `NinjaTrader.Cbi.OrderState` nicht**.
+Dabei fiel auf, dass die Abbildung nicht nur falsch benannt, sondern
+unvollständig war — `ChangePending`, `ChangeSubmitted`, `TriggerPending` und
+`CancelSubmitted` wären über den default-Zweig als `inactive` durchgegangen,
+und eine noch arbeitende Order hätte in TradeX als endgültig erledigt gegolten.
 
 **`Working` wird bewusst auf `accepted` abgebildet** und nicht auf einen
 eigenen Zustand: für TradeX ist die Frage „liegt sie an der Börse und kann
@@ -363,9 +374,19 @@ den sich `guard.py` stützt.
 ```
 
 Reason-Codes, keine Sätze — dieselbe Konvention wie im übrigen System, `de.ts`
-übersetzt sie. Codes: `account_not_simulated`, `account_unknown`,
-`instrument_unknown`, `duplicate_order_key`, `quantity_invalid`,
-`bracket_invalid`, `not_connected`.
+übersetzt sie.
+
+**Vom AddOn** (`ADDON_REJECT_CODES` in `tradex/broker/nt8/protocol.py`, ein
+Test hält beide Seiten gegeneinander): `order_key_missing`,
+`account_not_simulated`, `instrument_unknown`, `duplicate_order_key`,
+`quantity_invalid`, `bracket_invalid`, `submit_failed`.
+
+**Vom Python-Adapter**: `not_connected` — steht keine Leitung, kann das AddOn
+nicht antworten, also vergibt der Adapter den Grund selbst.
+
+`account_unknown` gibt es **nicht** (die Spezifikation nannte es einmal): ein
+unbekanntes Konto wird als `account_not_simulated` abgelehnt. Das ist die
+sichere Richtung — ein Konto, das es nicht gibt, ist kein Simulationskonto.
 
 ### Live-Trading
 

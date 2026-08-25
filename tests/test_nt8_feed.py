@@ -344,6 +344,36 @@ def test_der_letzte_tickkurs_wird_gemerkt(bridge: BridgeServer):
     assert feed.last_price["MNQ"] == 29433.25
 
 
+def test_orderereignisse_gelten_nicht_als_kaputt(bridge: BridgeServer):
+    """Seit Phase 9 teilen sich Orderweg und Marktdaten die Leitung.
+
+    Das AddOn sendet Orderereignisse per Broadcast an JEDEN Client, also auch
+    an den Feed. Sie gehen ihn nichts an - aber sie als `malformed` zu zaehlen
+    waere falsch: dieser Zaehler ist der Zeuge dafuer, dass die
+    Rahmenverarbeitung bricht. Ein Zaehler, der im Normalbetrieb hochlaeuft,
+    taugt fuer keine Diagnose mehr.
+    """
+    feed = NinjaTraderFeed(("MNQ",), port=bridge.port)
+    feed.start()
+    bridge.wait_for_client()
+    for nachricht in (
+        {"type": "order_update", "order_key": "S1", "state": "accepted"},
+        {"type": "execution", "order_key": "S1", "quantity": 1, "price": 29245.75},
+        {"type": "position", "account": "Sim101", "symbol": "MNQ", "quantity": -2},
+        {"type": "account", "name": "Sim101", "is_simulation": True},
+        {"type": "order_rejected", "order_key": "S1", "code": "quantity_invalid"},
+    ):
+        bridge.send(nachricht)
+    bridge.send(bar_message(1_740_000_300_000_000_000))
+
+    bars = [m for m in collect(feed, 2) if isinstance(m, BarMessage)]
+    feed.stop()
+
+    assert len(bars) == 1, "nach den Orderereignissen muss die Bar ankommen"
+    assert feed.malformed == 0, "Orderereignisse sind nicht kaputt, nur fremd"
+    assert feed.order_messages_ignored == 5
+
+
 # ------------------------------------------------------------------ Historie
 def test_historie_wird_angefordert_und_gilt_nicht_als_verbunden(bridge: BridgeServer):
     """Der gefaehrlichste Fehler waere, auf der Historie zu handeln.

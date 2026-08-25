@@ -53,6 +53,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from queue import Empty, Queue
 
+from tradex.broker.nt8.protocol import ORDER_MESSAGE_TYPES
 from tradex.domain.bars import Bar
 from tradex.domain.enums import Timeframe
 from tradex.live.feed import BarMessage, FeedMessage, HeartbeatMessage, StatusMessage
@@ -149,6 +150,10 @@ class NinjaTraderFeed:
         self._contracts: dict[str, str] = {}
         self.ticks_seen = 0
         self.malformed = 0
+        self.order_messages_ignored = 0
+        """Orderereignisse, die hier vorbeikamen. Der Feed wertet sie nicht aus -
+        dafuer ist `tradex/broker/nt8/` da -, aber sie zu zaehlen zeigt, dass
+        beide Wege dieselbe Leitung benutzen."""
         self.reconnects = 0
         self.history_bars = 0
         #: Symbole, deren Historie noch laeuft. Solange hier etwas steht, gilt
@@ -331,6 +336,14 @@ class NinjaTraderFeed:
             self._handle_tick(message)
         elif kind == "history_end":
             self._handle_history_end(message)
+        elif kind in ORDER_MESSAGE_TYPES:
+            # Seit Phase 9 laeuft der Orderweg ueber dieselbe Leitung, und das
+            # AddOn sendet Orderereignisse per Broadcast an JEDEN Client. Sie
+            # gehen den Feed nichts an - aber sie als kaputt zu zaehlen waere
+            # falsch: `malformed` ist der Zeuge dafuer, dass die
+            # Rahmenverarbeitung bricht. Ein Zaehler, der bei normalem Betrieb
+            # hochlaeuft, taugt fuer keine Diagnose mehr.
+            self.order_messages_ignored += 1
         else:
             self.malformed += 1
 
