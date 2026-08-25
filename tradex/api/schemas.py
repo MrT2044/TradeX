@@ -68,17 +68,33 @@ class BarsDto(_Dto):
     timeframe: str
     bars: tuple[BarDto, ...]
     forming: BarDto | None = None
-    """Die laufende Bar - AUSSCHLIESSLICH zur Anzeige (Architektur-Invariante 1)."""
+    """Der Zwischenstand aus GESCHLOSSENEN Basis-Bars - nur zur Anzeige
+    (Architektur-Invariante 1). Auf 1m ist das die zuletzt geschlossene Minute,
+    auf 5m der Teil des Buckets, der aus fertigen Minuten besteht."""
+    live: BarDto | None = None
+    """Die Kerze, die sich GERADE bildet - aus Ticks, nie analysiert.
+
+    Getrennt von `forming`, weil die beiden verschiedene Dinge sind: `forming`
+    besteht aus Bars, die die Engine gesehen hat, `live` aus Ticks, die sie nie
+    sehen wird. Liegt `live` im selben Bucket wie `forming`, ersetzt es dieses
+    in der Anzeige; sonst kommt es dahinter. None heisst schlicht: kein
+    laufender Kurs - dann sieht der Chart aus wie bisher."""
 
     @classmethod
     def of(
-        cls, symbol: str, timeframe: str, series: BarSeries, forming: Bar | None = None
+        cls,
+        symbol: str,
+        timeframe: str,
+        series: BarSeries,
+        forming: Bar | None = None,
+        live: Bar | None = None,
     ) -> BarsDto:
         return cls(
             symbol=symbol,
             timeframe=timeframe,
             bars=tuple(BarDto.of(bar) for bar in series),
             forming=BarDto.of(forming) if forming else None,
+            live=BarDto.of(live) if live else None,
         )
 
 
@@ -494,6 +510,14 @@ class HealthDto(_Dto):
     symbol: str
     config_hash: str
     strategy_version: str
+    display_timezone: str = "UTC"
+    """IANA-Zeitzone fuer alle sichtbaren Zeitangaben (`app.display_timezone`).
+
+    Gehoert in den Vertrag, weil die Oberflaeche sie sonst raten muesste - und
+    ihre einzige Alternative waere UTC oder die Zeitzone des Browsers. Beides
+    ist falsch: die eine zeigt 12:20, wo 14:20 gehandelt wird, die andere
+    zeigt je nach Geraet etwas anderes. Intern bleibt alles UTC; lokalisiert
+    wird ausschliesslich die Darstellung."""
     providers: tuple[ProviderDto, ...]
     warnings: tuple[str, ...] = ()
 

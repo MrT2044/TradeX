@@ -90,11 +90,20 @@ class ReplayFeed:
             if self._stop.is_set():
                 break
             if delay:
-                # In Scheiben warten, damit stop() sofort greift und nicht
-                # erst nach der naechsten Bar.
                 target = time.monotonic() + delay
-                while time.monotonic() < target and not self._stop.is_set():
-                    time.sleep(min(0.05, target - time.monotonic()))
+                while not self._stop.is_set():
+                    # Der Rest wird EINMAL berechnet und dann benutzt. Vorher
+                    # standen Pruefung und `sleep` je fuer sich: zwischen
+                    # beiden konnte die Uhr ueber `target` laufen, und
+                    # `time.sleep` wirft bei einer negativen Dauer. Der
+                    # Wiedergabefaden starb daran lautlos - die Sitzung bekam
+                    # keine Bars mehr und sah dabei aus wie ein ruhiger Markt.
+                    rest = target - time.monotonic()
+                    if rest <= 0:
+                        break
+                    # In Scheiben warten, damit stop() sofort greift und nicht
+                    # erst nach der naechsten Bar.
+                    time.sleep(min(0.05, rest))
             self._queue.put(BarMessage(symbol=symbol, bar=bar, received_ts=time.time_ns()))
 
             now = time.monotonic()

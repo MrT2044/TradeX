@@ -142,6 +142,7 @@ def _schneller_takt(monkeypatch: pytest.MonkeyPatch) -> None:
     der Dauer.
     """
     monkeypatch.setattr(stream_route, "POLL_SECONDS", 0.01)
+    monkeypatch.setattr(stream_route, "TICK_POLL_SECONDS", 0.01)
 
 
 def test_der_strom_meldet_sofort_und_nicht_erst_bei_der_ersten_aenderung(client: TestClient):
@@ -217,6 +218,148 @@ def test_der_brokerzustand_ist_auch_ohne_anbindung_aussagefaehig(client: TestCli
     assert broker["account"] == ""
     assert broker["open_orders"] == 0
     assert broker["tradeable_symbols"] == []
+
+
+# ------------------------------------------------------------- Kursstrom
+def _tick_lauf(durchgaenge: int, symbol: str = SYMBOL, timeframe: str = "5m") -> list[bytes]:
+    """Wie `_lauf`, aber fuer `/api/ticks` - und aus demselben Grund direkt.
+
+    Ueber `TestClient` haenge der Test, weil auch dieser Strom nie endet.
+    """
+
+    async def sammeln() -> list[bytes]:
+        anfrage = _Anfrage(durchgaenge)
+        stuecke: list[bytes] = []
+        async for stueck in stream_route._ticks(
+            anfrage,  # type: ignore[arg-type]
+            symbol,
+            Timeframe.parse(timeframe),
+        ):
+            stuecke.append(stueck)
+        return stuecke
+
+    return asyncio.run(sammeln())
+
+
+def test_der_kursstrom_traegt_keine_sitzungsdaten(client: TestClient):
+    """Er wird zehn Mal je Sekunde geprueft.
+
+    Den Betriebszustand mitzuschicken hiesse, ihn zehn Mal je Sekunde ueber die
+    Leitung zu schieben, weil sich eine Zahl darin geaendert hat - und dafuer
+    gibt es `/api/stream`.
+    """
+    stuecke = _tick_lauf(1)
+    assert stuecke, "es kam gar nichts"
+    daten = json.loads(stuecke[0].decode("utf-8").split("data: ", 1)[1])
+
+    assert set(daten) == {"symbol", "timeframe", "price", "bar"}
+    assert daten["symbol"] == SYMBOL
+    assert daten["timeframe"] == "5m"
+    # Ohne Ticks gibt es nichts Laufendes zu zeigen - und das ist eine
+    # Auskunft, keine Luecke.
+    assert daten["bar"] is None
+    assert daten["price"] == 0.0
+
+
+def test_der_kursstrom_wiederholt_sich_nicht(client: TestClient):
+    """Zusammenfassen statt Vollstaendigkeit: gesendet wird bei Aenderung."""
+    stuecke = _tick_lauf(20)
+    ticks = [s for s in stuecke if s.startswith(b"event: tick")]
+    assert len(ticks) == 1, f"{len(ticks)} Meldungen ohne Kursaenderung"
+
+
+def test_der_kursstrom_endet_wenn_der_betrachter_geht(client: TestClient):
+    """Sonst bleibt je Betrachter eine Schleife im Server stehen."""
+    assert _tick_lauf(3), "es kam gar nichts"
+
+
+def test_ein_ungeladenes_symbol_beendet_den_kursstrom_nicht(client: TestClient):
+    """Das Symbol kann im naechsten Moment da sein.
+
+    Ein Strom, der am fehlenden Datenbestand stirbt, muesste vom Browser neu
+    aufgebaut werden - waehrend der Chart genau darauf wartet.
+    """
+    stuecke = _tick_lauf(2, symbol="GIBTESNICHT")
+    assert stuecke
+    daten = json.loads(stuecke[0].decode("utf-8").split("data: ", 1)[1])
+    assert daten["bar"] is None
+
+
+def test_die_zeitzone_der_anzeige_steht_im_vertrag(client: TestClient):
+    """Ohne sie muesste die Oberflaeche raten - und zeigte 12:20, wo um 14:20
+    gehandelt wird. Verglichen wird mit der GELADENEN Konfiguration, nicht mit
+    einem festen Text: hier wird der Vertrag geprueft, nicht die Auslieferung.
+    """
+    from zoneinfo import ZoneInfo
+
+    zone = client.get("/api/health").json()["display_timezone"]
+    erwartet = load_config(PROJECT_ROOT / "config" / "default.yaml")
+
+    assert zone == erwartet.app.display_timezone
+    assert ZoneInfo(zone), "die Kennung muss eine echte IANA-Zone sein"
+
+
+# --------------------------------------------------------- Marktzustand
+def test_der_marktzustand_kommt_aus_der_uhr_nicht_aus_den_daten(client: TestClient):
+    """Der Fehler, um den es geht.
+
+    Die Kopfzeile las bisher `snapshot.session` - die Session der zuletzt
+    ANALYSIERTEN Bar. Liegt der geladene Bestand ein paar Tage zurueck, meldet
+    sie dauerhaft "geschlossen", waehrend nebenan Kurse hereinlaufen. Der
+    Kalender weiss es, die Datenlage nicht.
+    """
+    import time as uhr
+
+    from tradex.config import get_instrument
+    from tradex.data.sessions import SessionCalendar
+
+    body = client.get(f"/api/market?symbol={SYMBOL}").json()
+    erwartet = SessionCalendar(get_instrument(SYMBOL)).info_at(uhr.time_ns())
+
+    assert body["symbol"] == SYMBOL
+    assert body["is_open"] is erwartet.is_open
+    assert body["session"] == erwartet.session.value
+    assert body["timezone"] == get_instrument(SYMBOL).exchange_timezone
+    # Ohne die Serveruhr liesse sich ein geschlossener Markt nicht von einer
+    # stehengebliebenen Anzeige unterscheiden.
+    assert body["server_ts"] > 0
+
+
+def test_der_marktzustand_haengt_nicht_am_geladenen_bestand(client: TestClient):
+    """Waechter: derselbe Zustand, ob etwas geladen ist oder nicht.
+
+    Genau diese Kopplung war der Fehler - und sie faellt nur auf, wenn man sie
+    ausdruecklich prueft.
+    """
+    ohne = client.get(f"/api/market?symbol={SYMBOL}").json()
+    client.post("/api/load", json={"symbol": SYMBOL, "max_bars": 5000})
+    mit = client.get(f"/api/market?symbol={SYMBOL}").json()
+
+    assert ohne["is_open"] == mit["is_open"]
+    assert ohne["session"] == mit["session"]
+
+
+def test_ein_unbekanntes_symbol_laesst_die_kopfzeile_nicht_leer(client: TestClient):
+    """Ein fehlender Marktzustand ist von "geschlossen" nicht zu unterscheiden -
+    deshalb faellt der Endpunkt auf das Standardinstrument zurueck."""
+    body = client.get("/api/market?symbol=GIBTESNICHT").json()
+    assert body["session"]
+    assert isinstance(body["is_open"], bool)
+
+
+def test_bars_liefern_die_laufende_kerze_getrennt_mit(client: TestClient):
+    """`forming` und `live` sind zwei verschiedene Dinge.
+
+    `forming` besteht aus Bars, die die Engine gesehen hat, `live` aus Ticks,
+    die sie nie sehen wird. In ein Feld zusammenzulegen hiesse, den Unterschied
+    zu verlieren, auf dem Invariante 1 steht.
+    """
+    client.post("/api/load", json={"symbol": SYMBOL, "max_bars": 5000})
+    koerper = client.get(f"/api/bars?symbol={SYMBOL}&timeframe=5m").json()
+
+    assert "live" in koerper, "das Feld muss im Vertrag stehen, auch wenn es leer ist"
+    assert koerper["live"] is None, "ohne Ticks gibt es keine laufende Kerze"
+    assert koerper["forming"] is not None
 
 
 def test_ready_fasst_die_kette_zu_einer_zahl_zusammen(client: TestClient):

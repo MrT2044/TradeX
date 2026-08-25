@@ -22,6 +22,8 @@ prominent anbietet.
 
 from __future__ import annotations
 
+import contextlib
+
 from fastapi import APIRouter, Query
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -58,10 +60,16 @@ def start(request: SessionStartRequest) -> SessionStatusDto:
     # gibt nur eine Verbindung zur Bridge, und der Betrieb hat Vorrang. Der
     # Chart merkt davon nichts - er folgt automatisch der Sitzung
     # (`TradexService.chart_context`).
-    service.stop_watch()
-    manager = service.sessions
-    return SessionStatusDto.of(
-        manager.start(
+    #
+    # NUR bei `nt8`: die Wiedergabe benutzt die Bridge gar nicht. Vorher wurde
+    # die Beobachtung fuer jede Sitzung abgeraeumt, auch fuer einen
+    # Wiedergabelauf, der sie nicht braucht.
+    beobachtet = service.watch.symbol if service.watch is not None else ""
+    if request.feed == "nt8":
+        service.stop_watch()
+
+    try:
+        zustand = service.sessions.start(
             SessionRequest(
                 symbols=tuple(s.strip().upper() for s in request.symbols if s.strip()),
                 feed=request.feed,
@@ -73,7 +81,16 @@ def start(request: SessionStartRequest) -> SessionStatusDto:
                 max_bars=request.max_bars,
             )
         )
-    )
+    except Exception:
+        # Der Start ist gescheitert - dann darf die Beobachtung nicht als
+        # Kollateralschaden zurueckbleiben. Vorher blieb der Chart in genau
+        # diesem Fall stehen, ohne dass etwas nach einem Fehler aussah, und
+        # kam erst bei einem Symbolwechsel wieder.
+        if beobachtet:
+            with contextlib.suppress(LookupError):
+                service.start_watch(beobachtet)
+        raise
+    return SessionStatusDto.of(zustand)
 
 
 @router.post("/session/halt")

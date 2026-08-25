@@ -272,6 +272,10 @@ class MarketContext:
         """Die noch laufende Bar - AUSSCHLIESSLICH zur Anzeige (Invariante 1)."""
         return self.aggregator.forming(timeframe)
 
+    def bucket_start(self, ts_ns: int, timeframe: Timeframe) -> int:
+        """Bucket-Beginn im Raster dieses Kontexts - fuer die Anzeige."""
+        return self.aggregator.bucket_start(ts_ns, timeframe)
+
     # -------------------------------------------------------------- Auswertung
     def bias(self) -> BiasResult:
         """Aktueller HTF-Bias (Spec §7 Schritt 1)."""

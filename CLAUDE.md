@@ -222,6 +222,69 @@ schmalgerechneter Desktop, und enthält **keine Steuerbefehle**. Statusabfragen
 dürfen **nie** blockierende Broker-Aufrufe machen (`get_open_orders()` wartet
 auf Antwort) — sonst steht die Anzeige, wenn der Broker klemmt.
 
+**Die laufende Kerze kommt aus Ticks und ist NIE analysiert.** Das AddOn sendet
+nur geschlossene Bars — um 14:21:36 ist die letzte die von 14:20, und
+`forming` zeigt genau die. Die laufende Minute wird deshalb daneben gebaut:
+`NinjaTraderFeed.live_bar()` sammelt Ticks im Basisraster,
+`TradexService.display_bar()` setzt sie mit `forming` zum Bucket der
+angezeigten Zeitebene zusammen (`context.bucket_start` — **nicht** selbst
+rechnen, zwei Raster nebeneinander erzeugen am Rand eine Kerze zu viel). Sie
+geht nie in die Feed-Queue und damit nie in `MarketContext`. Im DTO ist sie
+`live`, getrennt von `forming`; die Trennung ist die ganze Pointe. Veraltete
+Ticks (`live.display_tick_max_age_seconds`) zeigen gar keine Kerze — eine
+stehende, die wie eine laufende aussieht, sieht nach Markt aus, wo die
+Verbindung weg ist.
+
+**Kurse gehen über `/api/ticks` (SSE), nicht über Abfragen.** Eigener Strom
+neben `/api/stream`: der trägt den ganzen Betriebszustand und prüft einmal je
+Sekunde. Gesendet wird bei Änderung, zusammengefasst auf den neuesten Kurs —
+die Anzeige braucht den letzten Tick, nicht jeden. Dieselbe Regel gilt schon
+im AddOn (`pendingTicks` ersetzt statt anzuhängen, `SendLoop` in eigenem
+Faden: ein `Write` im Marktdaten-Callback hängt NinjaTraders Datenfaden an
+einen langsamen Leser). **Bars werden nie zusammengefasst.**
+
+**Zeiten werden nur in der Anzeige lokalisiert.** `app.display_timezone` steht
+im `/health`-Vertrag, `ui/src/chart/zeit.ts` formatiert Achse und Fadenkreuz
+mit `Intl.DateTimeFormat`. **Nie einen festen Stundenoffset** — der ist die
+halbe Jahreshälfte richtig und fällt deshalb beim Ausprobieren nicht auf.
+Tests laufen ohne Zusatzpaket: `cd ui ; npm test` (Node entfernt die
+Typannotationen selbst; `*.test.ts` steht deshalb nicht im tsconfig-`include`).
+
+**Die C#-Seite hat einen Vertragstest** (`tests/test_bridge_contract.py`,
+liest `TradeXBridge.cs`). Grund: Ticks waren im Protokoll und im Python-Client
+beschrieben, im AddOn aber nie erzeugt — alle Tests grün, `ticks_seen = 0` im
+Betrieb. Wer eine Protokollseite nur beim Konsumenten prüft, prüft sie nicht.
+
+**Marktstatus kommt aus dem Kalender, nie aus dem Datenstrom.**
+`TradexService.market_status()` → `SessionCalendar.info_at(time.time_ns())`,
+ausgeliefert über `GET /api/market`, die Oberfläche holt ihn alle 15 s. Vorher
+las die Kopfzeile `snapshot.session` — die Session der zuletzt *analysierten*
+Bar, also bei altem Bestand dauerhaft „geschlossen". Historie, verzögerte
+Kurse und der Simulationsfeed laufen auch bei geschlossener Börse ein; wer aus
+ankommenden Ticks auf „offen" schließt, baut eine Anzeige, die genau dann
+lügt, wenn es zählt. Kommen Daten bei geschlossenem Kalender, sagt der Chart
+das dazu, statt eine der beiden Aussagen zu unterdrücken.
+
+**Eine beendete Sitzung ist nicht „live".** `SessionManager` räumt `_session`
+und `_feed` beim Stopp absichtlich nicht weg (Abschlussbericht). Jede Abfrage,
+die den Betrieb bevorzugt (`chart_context`, `strategy`, `is_live`,
+`_tick_source`), muss deshalb `sessions.is_running` mitprüfen — sonst zeigt
+der Chart nach jedem Stopp auf einen toten Feed.
+
+**Anzeigevorlieben gehören in den Browser, nicht in die Config.**
+`useGespeicherteEinstellung` (localStorage) hält Overlay-Schalter und
+Zeitebene; Overlays sind beim ersten Start **alle aus**. In `default.yaml`
+hätten sie nichts zu suchen: was dort steht, geht in den `config_hash` und
+damit in jeden Protokolleintrag und Backtest-Lauf. Das Symbol wird bewusst
+nicht gemerkt — sonst lädt und analysiert der Start ungefragt.
+
+**Kerzenfarbe ist reine Anzeige** (`kerzenFarbe` in `TradeChart.tsx`):
+`close > open` grün, `close < open` rot, neutral nur bei exakt gleich —
+dieselbe Funktion für geschlossene und laufende Kerzen. Die laufende war
+früher grau, um „nicht analysiert" zu zeigen; das sah nach kaputt aus und
+verschwieg die Richtung. Dass sie nicht analysiert ist, hängt nicht an einer
+Farbe, sondern daran, welchen Weg die Bar nimmt.
+
 **Marktbeobachtung ≠ Betrieb.** `live/watch.py` liest ein Symbol live mit —
 Historie, Bars, Ticks — **ohne Risikobuch, Broker oder Executor**; eine Order
 kann daraus strukturell nicht entstehen. Sie läuft, sobald ein Instrument mit

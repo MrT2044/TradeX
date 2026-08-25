@@ -108,8 +108,22 @@ class MarketWatch:
         return self._feed.last_price.get(self.symbol, 0.0)
 
     @property
+    def last_tick_ts(self) -> int:
+        """Wanduhr des letzten Ticks - 0, wenn noch keiner kam."""
+        return self._feed.last_tick_ts.get(self.symbol, 0)
+
+    @property
     def ticks_seen(self) -> int:
         return self._feed.ticks_seen
+
+    def live_bar(self) -> Bar | None:
+        """Die laufende Kerze aus Ticks - nur zur Anzeige, nie zur Analyse.
+
+        Sie geht NICHT durch `_on_bar` und damit nicht in den `MarketContext`.
+        Der Weg dorthin fuehrt ausschliesslich ueber geschlossene Bars des
+        AddOns (Invariante 1).
+        """
+        return self._feed.live_bar(self.symbol)
 
     # -------------------------------------------------------------- Lesefaden
     def _run(self) -> None:

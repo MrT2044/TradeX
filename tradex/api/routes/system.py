@@ -40,6 +40,9 @@ def health() -> HealthDto:
         # zeigte das Dashboard eine Regelfassung an, nach der nie entschieden
         # wurde (Spec §21).
         strategy_version=STRATEGY_VERSION,
+        # Aus der GELADENEN Konfiguration, nicht aus einer Konstante: sonst
+        # zeigte die Oberflaeche eine Zeitzone an, nach der niemand rechnet.
+        display_timezone=service.config.app.display_timezone,
         providers=providers,
         warnings=warnings,
     )

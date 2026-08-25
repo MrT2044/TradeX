@@ -18,9 +18,10 @@ import {
 } from 'lightweight-charts';
 import { useEffect, useMemo, useRef } from 'react';
 
-import type { BarsResponse, Overlays } from '../api/types';
+import type { Bar, BarsResponse, Overlays } from '../api/types';
 import { COLORS } from '../theme';
 import { OverlayPrimitive, type OverlayBox, type OverlayLine } from './primitives/overlay';
+import { crosshairZeit, tickMark } from './zeit';
 
 export interface ChartToggles {
   fvg: boolean;
@@ -35,13 +36,48 @@ interface Props {
   overlays: Overlays | null;
   toggles: ChartToggles;
   priceDecimals: number;
-  /** Zuletzt gehandelter Kurs aus den Ticks. Bewegt die laufende Bar zwischen
-   *  zwei Bar-Schluessen mit - geht in keine Analyse ein (Invariante 1). */
-  livePrice?: number;
+  /** Die Kerze, die sich gerade bildet - aus Ticks gebaut, vom Server im
+   *  richtigen Bucket geliefert. Sie geht in keine Analyse ein (Invariante 1).
+   *  Kommt haeufiger herein als `bars` und bewegt nur diese eine Kerze. */
+  liveBar?: Bar | null;
+  /** IANA-Zeitzone der Achsenbeschriftung. Intern bleibt alles UTC. */
+  timeZone: string;
 }
 
 /** Engine-Timestamps sind Nanosekunden UTC, lightweight-charts erwartet Sekunden. */
 const toChartTime = (ts: number): Time => Math.floor(ts / 1_000_000_000) as Time;
+
+/** Richtungsfarbe einer Kerze - dieselbe Regel wie in jedem Handelschart.
+ *
+ *  Sie wird bei JEDEM Tick neu bestimmt, nicht einmal beim Anlegen: laeuft der
+ *  Kurs innerhalb derselben Kerze ueber den Eroeffnungspreis, muss sie sofort
+ *  von rot auf gruen umschlagen. Neutral gilt ausschliesslich bei exakt
+ *  open == close - jede andere Faerbung behauptete eine Richtung, die die Bar
+ *  nicht hat. */
+const kerzenFarbe = (bar: Bar): string =>
+  bar.close > bar.open ? COLORS.candleUp : bar.close < bar.open ? COLORS.candleDown : COLORS.candleFlat;
+
+/** Eine Kerze fuer die Bibliothek - geschlossen wie laufend, gleiche Regel.
+ *
+ *  Die laufende war frueher grau, um zu zeigen, dass sie NICHT analysiert wurde. Das
+ *  hat den Zweck verfehlt: grau sah nach kaputt aus, und die Richtung - die
+ *  eigentliche Auskunft einer Kerze - fehlte. Dass sie nicht analysiert ist,
+ *  steht ohnehin an der Anzeige `BEOBACHTUNG`/`ECHTZEIT` daneben, und die
+ *  Invariante haengt nicht an einer Farbe, sondern daran, welchen Weg die Bar
+ *  nimmt. */
+const kerze = (bar: Bar): CandlestickData<Time> => {
+  const farbe = kerzenFarbe(bar);
+  return {
+    time: toChartTime(bar.ts),
+    open: bar.open,
+    high: bar.high,
+    low: bar.low,
+    close: bar.close,
+    color: farbe,
+    borderColor: farbe,
+    wickColor: farbe,
+  };
+};
 
 function buildBoxes(overlays: Overlays | null, toggles: ChartToggles): OverlayBox[] {
   if (!overlays || !toggles.fvg) return [];
@@ -146,7 +182,14 @@ function buildMarkers(overlays: Overlays | null, toggles: ChartToggles): SeriesM
   return markers;
 }
 
-export function TradeChart({ bars, overlays, toggles, priceDecimals, livePrice }: Props) {
+export function TradeChart({
+  bars,
+  overlays,
+  toggles,
+  priceDecimals,
+  liveBar,
+  timeZone,
+}: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick', Time> | null>(null);
@@ -215,32 +258,47 @@ export function TradeChart({ bars, overlays, toggles, priceDecimals, livePrice }
     });
   }, [priceDecimals]);
 
-  // Kerzen setzen. Die laufende Bar wird angehaengt, aber optisch abgesetzt -
+  // Zeitachse und Fadenkreuz in der konfigurierten Zone.
+  //
+  // Ohne diese beiden Formatierer zeigt lightweight-charts die Sekunden als
+  // UTC - im Chart stand 12:20, wo um 14:20 gehandelt wurde. Die Zone kommt
+  // aus der Konfiguration und nicht aus dem Browser: massgeblich ist, in
+  // welcher Zeit dieses System rechnet, nicht wo gerade jemand sitzt. Ein
+  // fester Aufschlag waere die Haelfte des Jahres falsch (siehe zeit.ts).
+  useEffect(() => {
+    chartRef.current?.applyOptions({
+      localization: { timeFormatter: (time: Time) => crosshairZeit(timeZone, time as number) },
+      timeScale: {
+        tickMarkFormatter: (time: Time, art: number) => tickMark(timeZone, time as number, art),
+      },
+    });
+  }, [timeZone]);
+
+  // Kerzen setzen. Die laufende Bar wird angehaengt -
   // sie ist noch nicht abgeschlossen und wurde deshalb NICHT analysiert.
   useEffect(() => {
     const series = seriesRef.current;
     if (!series || !bars) return;
 
-    const data: CandlestickData<Time>[] = bars.bars.map((bar) => ({
-      time: toChartTime(bar.ts),
-      open: bar.open,
-      high: bar.high,
-      low: bar.low,
-      close: bar.close,
-    }));
+    // Jede Kerze bekommt ihre Farbe ausdruecklich, auch die geschlossenen.
+    // Sonst entschiede die Bibliothek fuer open == close von sich aus auf
+    // "auf" - und dieselbe Bar saehe je nachdem, ob sie gerade laeuft oder
+    // schon fertig ist, verschieden aus.
+    const data: CandlestickData<Time>[] = bars.bars.map((bar) => kerze(bar));
 
-    if (bars.forming) {
-      data.push({
-        time: toChartTime(bars.forming.ts),
-        open: bars.forming.open,
-        high: bars.forming.high,
-        low: bars.forming.low,
-        close: bars.forming.close,
-        color: COLORS.formingBar,
-        borderColor: COLORS.formingBorder,
-        wickColor: COLORS.formingBorder,
-      });
-    }
+    // Zwei verschiedene Dinge, und die Reihenfolge entscheidet:
+    //
+    //   `forming` ist der Zwischenstand aus GESCHLOSSENEN Basis-Bars. Auf 1m
+    //   ist das die zuletzt fertige Minute - also um 14:21:36 die von 14:20.
+    //   `live` ist die Kerze, die GERADE entsteht, aus Ticks.
+    //
+    // Liegen beide im selben Bucket (5m und groesser), ist `live` der
+    // vollstaendigere Stand und ersetzt `forming`. Auf 1m liegen sie in
+    // verschiedenen Minuten und gehoeren beide ins Bild - genau hier hing der
+    // Chart vorher eine Minute hinterher.
+    const zeigeForming = bars.forming && (!bars.live || bars.live.ts !== bars.forming.ts);
+    if (zeigeForming && bars.forming) data.push(kerze(bars.forming));
+    if (bars.live) data.push(kerze(bars.live));
 
     series.setData(data);
 
@@ -257,31 +315,31 @@ export function TradeChart({ bars, overlays, toggles, priceDecimals, livePrice }
     }
   }, [bars]);
 
-  // Laufender Kurs: die noch offene Bar mitbewegen.
+  // Laufende Kerze nachfuehren.
   //
-  // Bars kommen im Minutentakt, Ticks mehrmals je Sekunde. Ohne das hier stand
+  // Bars kommen im Minutentakt, Kurse mehrmals je Sekunde. Ohne das hier stand
   // die Kerze bis zu einer Minute still, waehrend NinjaTrader daneben lief -
   // und ein Chart, der sich nicht ruehrt, sieht kaputt aus.
   //
-  // Angefasst wird ausschliesslich die LAUFENDE Bar. Sie ist per Invariante 1
-  // von der Analyse ausgenommen und nur zur Anzeige da; keine geschlossene Bar
-  // wird nachtraeglich veraendert.
+  // `series.update` fasst genau EINE Kerze an und laesst Ausschnitt und Zoom
+  // in Ruhe (`fitContent` steht bewusst nur oben, beim Wechsel des
+  // Datenbestands). Der Bucket kommt fertig vom Server: wuerde er hier
+  // gerechnet, gaebe es zwei Bucket-Raster nebeneinander, und an der
+  // Minutengrenze zwei Kerzen fuer dieselbe Minute.
+  //
+  // Angefasst wird ausschliesslich die laufende Kerze. Sie ist per Invariante
+  // 1 von der Analyse ausgenommen; keine geschlossene Bar wird nachtraeglich
+  // veraendert.
   useEffect(() => {
     const series = seriesRef.current;
-    const forming = bars?.forming;
-    if (!series || !forming || livePrice === undefined) return;
-
-    series.update({
-      time: toChartTime(forming.ts),
-      open: forming.open,
-      high: Math.max(forming.high, livePrice),
-      low: Math.min(forming.low, livePrice),
-      close: livePrice,
-      color: COLORS.formingBar,
-      borderColor: COLORS.formingBorder,
-      wickColor: COLORS.formingBorder,
-    });
-  }, [livePrice, bars]);
+    if (!series || !liveBar) return;
+    // Nicht rueckwaerts zeichnen: waehrend eines Symbolwechsels kann ein
+    // Kurs des vorigen Datenbestands ankommen, und `update` mit einem
+    // aelteren Zeitstempel wirft.
+    const letzte = bars?.bars.at(-1);
+    if (letzte && liveBar.ts <= letzte.ts) return;
+    series.update(kerze(liveBar));
+  }, [liveBar, bars]);
 
   const boxes = useMemo(() => buildBoxes(overlays, toggles), [overlays, toggles]);
   const lines = useMemo(() => buildLines(overlays, toggles), [overlays, toggles]);

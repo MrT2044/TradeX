@@ -47,6 +47,7 @@ from tradex.broker.manager import OrderManager
 from tradex.broker.store import BrokerOrderStore
 from tradex.config import Config, resolved_config_path
 from tradex.data.store import BarStore
+from tradex.domain.bars import Bar
 from tradex.domain.instruments import Instrument
 from tradex.live.feed import LiveFeed
 from tradex.live.nt8_feed import DEFAULT_HOST, DEFAULT_PORT, NinjaTraderFeed
@@ -422,10 +423,22 @@ class SessionManager:
                     store.close()
                 raise
 
-            session = build_session(
-                request, self.config, self.instruments, feed.name, store, self._events, broker
-            )
-            runner = SessionRunner(session, feed)
+            try:
+                session = build_session(
+                    request, self.config, self.instruments, feed.name, store, self._events, broker
+                )
+                runner = SessionRunner(session, feed)
+            except Exception:
+                # Der Broker ist an dieser Stelle bereits VERBUNDEN. Ohne
+                # dieses Aufraeumen bliebe die Anmeldung beim Gateway offen,
+                # ohne dass irgendetwas sie noch kennt - und der naechste
+                # Startversuch liefe gegen eine belegte Client-ID.
+                if broker is not None:
+                    broker.close()
+                if store is not None:
+                    store.finish()
+                    store.close()
+                raise
 
             self._session, self._runner, self._store = session, runner, store
             self._feed = feed
@@ -572,6 +585,26 @@ class SessionManager:
         feed = self._feed
         preise = getattr(feed, "last_price", None) if feed is not None else None
         return dict(preise) if isinstance(preise, dict) else {}
+
+    def live_bar(self, symbol: str) -> Bar | None:
+        """Die aus Ticks gebaute laufende Kerze - nur zur Anzeige.
+
+        Wie `last_prices()` gefragt statt vorausgesetzt: die Wiedergabe kennt
+        keine Ticks. Und wie dort geht nichts davon in eine Entscheidung ein -
+        die Sitzung sieht diese Bar nie, sie liest nur aus der Feed-Queue, und
+        dort liegt sie nicht.
+        """
+        feed = self._feed
+        holen = getattr(feed, "live_bar", None) if feed is not None else None
+        if not callable(holen):
+            return None
+        bar = holen(symbol)
+        return bar if isinstance(bar, Bar) else None
+
+    def last_tick_ts(self, symbol: str) -> int:
+        feed = self._feed
+        stempel = getattr(feed, "last_tick_ts", None) if feed is not None else None
+        return int(stempel.get(symbol.upper(), 0)) if isinstance(stempel, dict) else 0
 
     def trades(self, limit: int = 100) -> tuple[SimulatedTrade, ...]:
         session = self._session

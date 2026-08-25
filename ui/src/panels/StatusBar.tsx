@@ -1,12 +1,15 @@
 /** Kopfzeile: Instrument, Marktzustand, Modus, Datenquelle (Spec 22). */
 
-import type { ContextSnapshot, Coverage, Health, Instrument } from '../api/types';
+import type { Coverage, Health, Instrument, MarketStatus } from '../api/types';
 import { de } from '../i18n/de';
 
 interface Props {
   health: Health | null;
   instrument: Instrument | null;
-  snapshot: ContextSnapshot | null;
+  /** Marktzustand aus dem Handelskalender. Frueher stand hier die Session der
+   *  zuletzt ANALYSIERTEN Bar - bei altem Datenbestand also dauerhaft
+   *  "geschlossen", waehrend nebenan Kurse hereinliefen. */
+  market: MarketStatus | null;
   coverage: Coverage[];
   symbols: string[];
   /** Welche Symbole gespeicherte Historie haben. */
@@ -21,7 +24,7 @@ interface Props {
 export function StatusBar({
   health,
   instrument,
-  snapshot,
+  market,
   coverage,
   symbols,
   withData,
@@ -30,8 +33,11 @@ export function StatusBar({
   onSelect,
   busy,
 }: Props) {
-  const session = snapshot?.session ?? 'closed';
-  const marketOpen = session !== 'closed';
+  // Solange der Marktzustand noch nicht da ist, wird nichts behauptet - weder
+  // offen noch geschlossen. Eine Anzeige, die im Zweifel "geschlossen" sagt,
+  // ist keine Auskunft, sondern eine Vermutung mit Autoritaet.
+  const session = market?.session ?? '';
+  const marketOpen = market?.is_open ?? false;
   const barCount = coverage
     .filter((c) => c.symbol === selected)
     .reduce((total, c) => Math.max(total, c.bar_count), 0);
@@ -75,13 +81,17 @@ export function StatusBar({
         </label>
 
         <Item label={de.status.market}>
-          <span className={marketOpen ? 'pill pill--ok' : 'pill pill--off'}>
-            {marketOpen ? de.status.open : de.status.closed}
-          </span>
+          {market ? (
+            <span className={marketOpen ? 'pill pill--ok' : 'pill pill--off'}>
+              {marketOpen ? de.status.open : de.status.closed}
+            </span>
+          ) : (
+            <span className="pill pill--info">-</span>
+          )}
         </Item>
 
         <Item label={de.status.session}>
-          {de.status.sessions[session] ?? session}
+          {session ? (de.status.sessions[session] ?? session) : '-'}
         </Item>
 
         <Item label={de.status.mode}>

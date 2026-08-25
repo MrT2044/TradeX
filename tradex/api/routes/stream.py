@@ -29,11 +29,12 @@ import asyncio
 import json
 from collections.abc import AsyncIterator
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from tradex.api.schemas import SessionStatusDto
+from tradex.api.schemas import BarDto, SessionStatusDto
 from tradex.api.state import get_service
+from tradex.domain.enums import Timeframe
 from tradex.logging_setup import get_logger
 
 router = APIRouter(tags=["stream"])
@@ -53,6 +54,17 @@ POLL_SECONDS = 1.0
 #: passiert oder ob die Leitung tot ist - und wuerde nach kurzer Zeit
 #: faelschlich melden, seine Zahlen seien veraltet.
 HEARTBEAT_SECONDS = 10.0
+
+
+#: Takt des Kursstroms. Vier Mal je Sekunde reichte nicht - so sah die Anzeige
+#: neben NinjaTrader aus, als stuende sie still. Zehn Mal je Sekunde ist die
+#: Grenze dessen, was ein Auge als fluessig liest, und kostet nichts: gesendet
+#: wird nur bei Aenderung, und die Nutzlast ist eine Zeile.
+TICK_POLL_SECONDS = 0.1
+
+#: Wie oft der Kursstrom ohne Aenderung ein Lebenszeichen schickt. Kuerzer als
+#: beim Zustandsstrom, weil ein ruhiger Markt hier der Normalfall ist.
+TICK_HEARTBEAT_SECONDS = 5.0
 
 
 def _payload(dto: SessionStatusDto) -> str:
@@ -89,6 +101,88 @@ async def _events(request: Request) -> AsyncIterator[bytes]:
                 yield b'event: heartbeat\ndata: {"ok":true}\n\n'
 
         await asyncio.sleep(POLL_SECONDS)
+
+
+def tick_payload(symbol: str, timeframe: Timeframe) -> str:
+    """Laufender Kurs und laufende Kerze - sonst nichts.
+
+    Bewusst NICHT ueber `/stream`: der traegt den gesamten Betriebszustand mit
+    sich und prueft einmal je Sekunde. Fuer eine Kursanzeige ist das zu schwer
+    und zu grob. Und bewusst nicht andersherum - Kurse in den Zustandsstrom zu
+    legen hiesse, jede Sekunde den ganzen Betriebszustand zu senden, weil sich
+    eine Zahl darin geaendert hat.
+
+    Die laufende Kerze kommt fertig aus dem Service. Sie hier oder gar im
+    Browser zusammenzusetzen hiesse, das Bucket-Raster ein zweites Mal zu
+    rechnen - und am Rand des Rasters saehe man zwei Kerzen fuer dieselbe
+    Minute.
+    """
+    service = get_service()
+    try:
+        bar = service.display_bar(symbol, timeframe)
+        preis = service.last_price(symbol)
+    except LookupError:
+        # Symbol nicht geladen: kein Fehler, sondern "es gibt nichts zu
+        # zeigen". Der Strom bleibt offen - das Symbol kann gleich da sein.
+        bar, preis = None, 0.0
+    return json.dumps(
+        {
+            "symbol": symbol.upper(),
+            "timeframe": timeframe.value,
+            "price": preis,
+            "bar": BarDto.of(bar).model_dump() if bar is not None else None,
+        }
+    )
+
+
+async def _ticks(request: Request, symbol: str, timeframe: Timeframe) -> AsyncIterator[bytes]:
+    letzte = ""
+    seit_heartbeat = 0.0
+
+    while True:
+        if await request.is_disconnected():
+            return
+        try:
+            aktuell = tick_payload(symbol, timeframe)
+        except Exception as fehler:  # der Strom darf nicht am Zustand sterben
+            log.warning("tickstrom_fehlgeschlagen", fehler=str(fehler))
+            yield b"event: error\ndata: " + json.dumps({"message": str(fehler)}).encode() + b"\n\n"
+            await asyncio.sleep(TICK_POLL_SECONDS)
+            continue
+
+        if aktuell != letzte:
+            # Zusammenfassung statt Vollstaendigkeit: die Anzeige braucht den
+            # NEUESTEN Kurs, nicht jeden einzelnen. Wer zwischen zwei Takten
+            # drei Ticks verpasst, sieht trotzdem das Richtige - wer den
+            # neuesten verpasst, nicht.
+            letzte = aktuell
+            seit_heartbeat = 0.0
+            yield b"event: tick\ndata: " + aktuell.encode("utf-8") + b"\n\n"
+        else:
+            seit_heartbeat += TICK_POLL_SECONDS
+            if seit_heartbeat >= TICK_HEARTBEAT_SECONDS:
+                seit_heartbeat = 0.0
+                yield b'event: heartbeat\ndata: {"ok":true}\n\n'
+
+        await asyncio.sleep(TICK_POLL_SECONDS)
+
+
+@router.get("/ticks")
+async def ticks(request: Request, symbol: str, timeframe: str = "5m") -> StreamingResponse:
+    """Kursstrom fuer den Chart. Keine Sitzungsdaten, keine Steuerbefehle."""
+    try:
+        tf = Timeframe.parse(timeframe)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return StreamingResponse(
+        _ticks(request, symbol, tf),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 @router.get("/stream")

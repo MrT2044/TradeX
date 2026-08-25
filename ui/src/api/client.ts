@@ -12,6 +12,7 @@ import type {
   Instrument,
   LoadResponse,
   LogEntry,
+  MarketStatus,
   Overlays,
   SessionRun,
   SessionStatus,
@@ -161,6 +162,12 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ symbol, days }),
     }),
+
+  /** Marktzustand zur Wanduhrzeit - aus dem Handelskalender, nicht aus dem
+   *  Datenstrom. Muss regelmaessig geholt werden: eine Session wechselt,
+   *  waehrend die Anwendung laeuft. */
+  market: (symbol: string) =>
+    request<MarketStatus>(`/market?symbol=${encodeURIComponent(symbol)}`),
 
   /** Zustand der Marktbeobachtung samt letztem Kurs. Bewusst schlank - die
    *  Oberflaeche fragt das mehrmals je Sekunde ab. */

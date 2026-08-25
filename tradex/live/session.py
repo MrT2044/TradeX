@@ -114,7 +114,14 @@ class SessionStatus:
 
     @property
     def seconds_since_message(self) -> float:
-        return 0.0
+        """Wie lange der Feed schon schweigt.
+
+        Lieferte frueher fest 0.0 - also "gerade eben", immer. Niemand rief es
+        auf, aber genau das ist die gefaehrliche Sorte toter Code: der erste,
+        der ihn benutzt, bekommt eine Antwort, die nie nach einem Fehler
+        aussieht.
+        """
+        return max(0.0, (time.time_ns() - self.last_message_ts) / 1e9)
 
 
 @dataclass(slots=True)

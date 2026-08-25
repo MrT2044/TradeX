@@ -8,18 +8,19 @@
  */
 
 export const COLORS = {
-  chartBg: '#12161d',
-  grid: '#1c222c',
+  // Nur die Chartflaeche ist schwarz, nicht die Anwendung: die Kerzen sollen
+  // den staerksten Kontrast im Bild haben. Das uebrige Theme bleibt unberuehrt
+  // (`--bg-panel` in styles.css).
+  chartBg: '#000000',
+  grid: '#161a21',
   border: '#2a323f',
   textMuted: '#8b95a5',
 
-  candleUp: '#2ea36b',
-  candleDown: '#d1494d',
-
-  // Die laufende Bar wird grau gezeichnet: sie ist noch nicht abgeschlossen und
-  // damit noch nicht analysiert (Architektur-Invariante 1).
-  formingBar: '#3a4250',
-  formingBorder: '#5a6577',
+  candleUp: '#16c784',
+  candleDown: '#ea3943',
+  //: Nur bei exakt open == close. Eine Kerze ohne Richtung rot oder gruen zu
+  //  faerben waere eine Aussage, die die Bar nicht hergibt.
+  candleFlat: '#8b95a5',
 
   fvgBull: {
     fill: 'rgba(46, 163, 107, 0.16)',

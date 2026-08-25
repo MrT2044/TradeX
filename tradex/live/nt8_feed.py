@@ -26,12 +26,21 @@ Ruhezustand. Drei Vorkehrungen:
    `StatusMessage` an die Sitzung. Die entscheidet, was daraus folgt - dieses
    Modul faellt keine Handelsentscheidung, auch keine negative.
 
-Ticks werden gelesen und verworfen
-----------------------------------
-Das AddOn kann Ticks senden. Die Engine analysiert aber ausschliesslich
-geschlossene Bars (Invariante 1); ein Tick, der irgendwo einfliesst, waere ein
-Zustand, den der Backtest nie sieht. Sie zu zaehlen ist trotzdem nuetzlich: die
-Zahl zeigt, ob der Feed lebt, wenn gerade keine Bar schliesst.
+Ticks laufen NEBEN der Analyse her, nie hinein
+-----------------------------------------------
+Das AddOn sendet Ticks. Die Engine analysiert aber ausschliesslich geschlossene
+Bars (Invariante 1); ein Tick, der irgendwo einfloesse, waere ein Zustand, den
+der Backtest nie sieht. Sie landen deshalb **nicht** in der Nachrichten-Queue,
+aus der die Sitzung liest, sondern in zwei Feldern daneben:
+
+* `last_price` - der zuletzt gehandelte Kurs je Symbol
+* `live_bar()` - die laufende Bar des Basis-Timeframes, aus Ticks gebaut
+
+Die laufende Bar gibt es, weil das AddOn per Definition nur GESCHLOSSENE Bars
+schickt: um 14:21:36 ist die letzte davon die von 14:20. Ohne die Tickbar zeigte
+der Chart deshalb dauerhaft eine Minute zu wenig - die Kerze, die sich gerade
+bildet, kaeme nirgends her. Sie ist reine Anzeige und wird nie weitergereicht;
+wer sie in `on_base_bar` gaebe, brauchte den Backtest nicht mehr zu befragen.
 """
 
 from __future__ import annotations
@@ -41,6 +50,7 @@ import socket
 import threading
 import time
 from collections.abc import Iterator
+from dataclasses import dataclass
 from queue import Empty, Queue
 
 from tradex.domain.bars import Bar
@@ -63,6 +73,42 @@ _RECONNECT_DELAYS = (1.0, 2.0, 5.0, 10.0, 15.0)
 
 _SOCKET_TIMEOUT = 2.0
 _RECEIVE_BYTES = 65536
+
+_NS_PER_SECOND = 1_000_000_000
+
+
+@dataclass
+class _TickBar:
+    """Die laufende Bar eines Buckets, aus Ticks aufgebaut - nur zur Anzeige.
+
+    Bewusst hier und nicht in `tradex/analysis/`: was aus Ticks entsteht, darf
+    nicht in die Naehe des Analysepfads geraten. Ein Bar-Objekt daraus zu bauen
+    ist Absicht - die Anzeige rechnet mit Bars - aber es verlaesst dieses Modul
+    nur ueber `live_bar()`, und das liest niemand, der analysiert.
+    """
+
+    ts: int
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float = 0.0
+
+    def update(self, price: float, size: float) -> None:
+        self.high = max(self.high, price)
+        self.low = min(self.low, price)
+        self.close = price
+        self.volume += size
+
+    def to_bar(self) -> Bar:
+        return Bar(
+            ts=self.ts,
+            open=self.open,
+            high=self.high,
+            low=self.low,
+            close=self.close,
+            volume=self.volume,
+        )
 
 
 class NinjaTraderFeed:
@@ -115,6 +161,13 @@ class NinjaTraderFeed:
         zur Anzeige: er geht in keinen Detektor und in keine Entscheidung ein.
         Ohne ihn steht der Chart zwischen zwei Bar-Schluessen eine Minute lang
         still, obwohl sich der Markt bewegt."""
+        self.last_tick_ts: dict[str, int] = {}
+        """Wanduhr des letzten Ticks je Symbol. Ohne sie liesse sich ein
+        stehengebliebener Kurs nicht von einem ruhigen Markt unterscheiden -
+        und die Anzeige zeigte stundenlang eine 'laufende' Kerze, die laengst
+        keine mehr ist."""
+        self._live: dict[str, _TickBar] = {}
+        self._live_lock = threading.Lock()
 
     # ------------------------------------------------------------------- Lauf
     def start(self) -> None:
@@ -160,6 +213,19 @@ class NinjaTraderFeed:
                     if not self._history_pending:
                         self._publish_status(True, f"{self.host}:{self.port}")
                     self._read_loop(sock)
+                # Hierher kommt man, wenn die GEGENSTELLE geschlossen hat -
+                # ohne Ausnahme, also am Wiederverbindungsdeckel unten vorbei.
+                # Bisher ging es danach sofort in den naechsten Versuch: ein
+                # AddOn, das jede Verbindung gleich wieder abweist (etwa
+                # waehrend NinjaTrader neu uebersetzt), erzeugte damit eine
+                # Schleife ohne Pause, die den Rechner belastet und den Grund
+                # unter Tausenden Zeilen begraebt.
+                if self._stop.is_set():
+                    break
+                delay = _RECONNECT_DELAYS[min(attempt, len(_RECONNECT_DELAYS) - 1)]
+                attempt += 1
+                self.reconnects += 1
+                self._stop.wait(delay)
             except OSError as error:
                 self._publish_status(False, str(error))
                 if self._stop.is_set():
@@ -294,7 +360,60 @@ class NinjaTraderFeed:
         except (KeyError, TypeError, ValueError):
             self.malformed += 1
             return
-        self.last_price[self._back.get(gemeldet, gemeldet)] = preis
+        if preis <= 0:
+            # Ein Preis von null ist kein Geschaeft, sondern ein Platzhalter.
+            # Er wuerde die laufende Kerze bis auf die Nulllinie ziehen.
+            self.malformed += 1
+            return
+
+        symbol = self._back.get(gemeldet, gemeldet)
+        try:
+            size = float(message.get("size", 0.0))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            size = 0.0
+        # Der Zeitstempel des AddOns sagt, wann gehandelt wurde. Fuer die Frage
+        # "ist dieser Kurs noch aktuell" zaehlt aber, wann WIR ihn gesehen
+        # haben: eine falsch gestellte Uhr in NinjaTrader liesse eine tote
+        # Anzeige sonst frisch aussehen.
+        self.last_price[symbol] = preis
+        self.last_tick_ts[symbol] = time.time_ns()
+
+        bucket = self._tick_bucket(message)
+        with self._live_lock:
+            laufend = self._live.get(symbol)
+            if laufend is None or laufend.ts != bucket:
+                self._live[symbol] = _TickBar(bucket, preis, preis, preis, preis, size)
+            else:
+                laufend.update(preis, size)
+
+    def _tick_bucket(self, message: dict[str, object]) -> int:
+        """Beginn des Buckets, in den dieser Tick faellt - im Raster des Feeds.
+
+        Genommen wird die Marktzeit des Ticks, nicht die Wanduhr: sonst landete
+        ein Tick, der eine halbe Sekunde unterwegs war, ueber der Minutengrenze
+        im falschen Bucket - und der Chart zeigte zwei Kerzen fuer dieselbe
+        Minute. Fehlt der Zeitstempel, ist die Wanduhr die einzige Auskunft,
+        die es gibt.
+        """
+        try:
+            ts = int(message["ts"])  # type: ignore[arg-type]
+        except (KeyError, TypeError, ValueError):
+            ts = 0
+        if ts <= 0:
+            ts = time.time_ns()
+        raster = self.timeframe.seconds * _NS_PER_SECOND
+        return (ts // raster) * raster
+
+    def live_bar(self, symbol: str) -> Bar | None:
+        """Die aus Ticks gebaute laufende Bar - AUSSCHLIESSLICH zur Anzeige.
+
+        Sie wird nie in die Queue gelegt und nie weitergereicht: wer sie
+        analysierte, saehe einen Zustand, den der Backtest nicht kennt
+        (Invariante 1).
+        """
+        with self._live_lock:
+            laufend = self._live.get(symbol.upper())
+            return laufend.to_bar() if laufend is not None else None
 
     def _handle_bar(self, message: dict[str, object]) -> None:
         try:

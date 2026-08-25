@@ -10,14 +10,17 @@ import type {
   Instrument,
   Integrity,
   LogEntry,
+  MarketStatus,
   Overlays,
   SessionStatus,
   SimulatedTrade,
   StrategyState,
   WatchState,
 } from './api/types';
+import { useGespeicherteEinstellung } from './api/useGespeicherteEinstellung';
 import { useIsMobile } from './api/useIsMobile';
 import { useSessionStream } from './api/useSessionStream';
+import { useTickStream } from './api/useTickStream';
 import { TradeChart, type ChartToggles } from './chart/TradeChart';
 import { MobileDashboard } from './panels/MobileDashboard';
 import { de } from './i18n/de';
@@ -59,29 +62,61 @@ const WARMUP_CHUNK = 5_000;
  *  waechst, und grob genug, dass die Abfrage nicht ins Gewicht faellt. */
 const LIVE_REFRESH_MS = 5_000;
 
-/** Wie oft der laufende Kurs geholt wird.
+/** Wie oft der ZUSTAND der Beobachtung geholt wird - nicht der Kurs.
  *
- *  Vier Mal je Sekunde. Die Anzeige soll sich bewegen wie in NinjaTrader, und
- *  einmal je Sekunde - der Takt des Zustandsstroms - sah aus, als stuende sie
- *  still. Die Abfrage dahinter ist absichtlich winzig: sie liest nur den
- *  letzten Kurs und ein paar Zaehler, ohne den Betriebszustand mitzuschleppen
- *  und ohne irgendwo zu blockieren. */
-const PRICE_REFRESH_MS = 250;
+ *  Der Kurs kommt ueber den Tickstrom (`useTickStream`) und wird geschickt,
+ *  sobald er sich aendert; eine Abfrage alle 250 ms konnte hoechstens vier
+ *  sichtbare Aktualisierungen je Sekunde liefern und kostete dafuer vier
+ *  HTTP-Anfragen. Hier bleiben Zaehler und Verbindungszustand, und die aendern
+ *  sich langsam. */
+const WATCH_STATE_MS = 2_000;
 
+/** Wie oft der Marktzustand nachgeholt wird.
+ *
+ *  Sessiongrenzen liegen auf vollen Minuten; 15 Sekunden sind fein genug, dass
+ *  ein Wechsel praktisch sofort sichtbar wird, und grob genug, dass die
+ *  Abfrage nicht ins Gewicht faellt. Entscheidend ist ueberhaupt ein Takt -
+ *  vorher aenderte sich der Status erst bei einem Neustart. */
+const MARKET_REFRESH_MS = 15_000;
+
+/** Beim allerersten Start ist ALLES aus.
+ *
+ *  Ein Chart, der ungefragt mit Zonen, Linien und Markern aufgeht, verdeckt
+ *  genau das, was man zuerst sehen will: den Kursverlauf. Was eingeblendet
+ *  wird, entscheidet der Betrachter - und diese Entscheidung bleibt danach
+ *  erhalten (`useGespeicherteEinstellung`). */
 const DEFAULT_TOGGLES: ChartToggles = {
-  fvg: true,
-  liquidity: true,
+  fvg: false,
+  liquidity: false,
   swings: false,
-  structure: true,
-  sweeps: true,
+  structure: false,
+  sweeps: false,
 };
+
+const TOGGLE_KEYS = ['fvg', 'liquidity', 'swings', 'structure', 'sweeps'] as const;
+
+/** Gegen einen alten oder von Hand veraenderten Eintrag im Browserspeicher.
+ *  Fehlt auch nur ein Schalter, wird der ganze Satz verworfen - eine halb
+ *  gelesene Einstellung waere schlimmer als der Ausgangszustand. */
+function sindToggles(wert: unknown): wert is ChartToggles {
+  if (typeof wert !== 'object' || wert === null) return false;
+  return TOGGLE_KEYS.every((key) => typeof (wert as Record<string, unknown>)[key] === 'boolean');
+}
 
 export default function App() {
   const [health, setHealth] = useState<Health | null>(null);
   const [instruments, setInstruments] = useState<Instrument[]>([]);
   const [coverage, setCoverage] = useState<Coverage[]>([]);
   const [symbol, setSymbol] = useState<string>('');
-  const [timeframe, setTimeframe] = useState<string>('5m');
+  // Die gewaehlte Zeitebene ist dieselbe Sorte Einstellung wie die Overlays -
+  // eine Anzeigevorliebe. Das Symbol dagegen NICHT: es beim Start
+  // wiederherzustellen hiesse, ungefragt einen Datenbestand zu laden und zu
+  // analysieren. Gewaehlt wird bewusst.
+  const [timeframe, setTimeframe] = useGespeicherteEinstellung<string>(
+    'chart.timeframe',
+    '5m',
+    (wert): wert is string => typeof wert === 'string' && TIMEFRAMES.includes(wert),
+  );
 
   const [bars, setBars] = useState<BarsResponse | null>(null);
   const [overlays, setOverlays] = useState<Overlays | null>(null);
@@ -97,7 +132,11 @@ export default function App() {
   const [playing, setPlaying] = useState(false);
   const [stepSize, setStepSize] = useState(15);
 
-  const [toggles, setToggles] = useState<ChartToggles>(DEFAULT_TOGGLES);
+  const [toggles, setToggles] = useGespeicherteEinstellung<ChartToggles>(
+    'chart.toggles',
+    DEFAULT_TOGGLES,
+    sindToggles,
+  );
   const [busy, setBusy] = useState(false);
   /** Fortschritt des Warmlaufs - null, wenn gerade keiner laeuft. */
   const [progress, setProgress] = useState<{ done: number; total: number } | null>(null);
@@ -106,6 +145,10 @@ export default function App() {
   const [reload, setReload] = useState(0);
   /** Zustand der Marktbeobachtung - Chart und Kurs ohne Handelssitzung. */
   const [watch, setWatch] = useState<WatchState | null>(null);
+  /** Marktzustand aus dem Handelskalender. Wird regelmaessig nachgeholt - eine
+   *  Session wechselt, waehrend die Anwendung laeuft, und bis hierher musste
+   *  man dafuer neu starten. */
+  const [market, setMarket] = useState<MarketStatus | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const [session, setSession] = useState<SessionStatus | null>(null);
@@ -160,6 +203,29 @@ export default function App() {
       cancelled = true;
     };
   }, []);
+
+  // --- Marktzustand nachfuehren --------------------------------------------
+  // Laeuft unabhaengig von allem anderen: der Markt oeffnet und schliesst,
+  // ob jemand zusieht oder nicht. Vorher stand hier die Session der zuletzt
+  // ANALYSIERTEN Bar - bei altem Datenbestand also dauerhaft "geschlossen",
+  // waehrend nebenan Kurse hereinliefen.
+  useEffect(() => {
+    let cancelled = false;
+    const holen = () => {
+      void api
+        .market(symbol)
+        .then((zustand) => {
+          if (!cancelled) setMarket(zustand);
+        })
+        .catch(() => undefined);
+    };
+    holen();
+    const timer = window.setInterval(holen, MARKET_REFRESH_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [symbol]);
 
   // --- Chartdaten und Analyse fuer den aktuellen Stand holen ---------------
   const refreshView = useCallback(
@@ -396,12 +462,26 @@ export default function App() {
    *  ist wichtig: nach einem Wechsel laeuft die alte Beobachtung noch kurz
    *  weiter, und ihr Kurs gehoerte dann zu einem anderen Instrument. */
   const watchActive = Boolean(watch?.running && symbol && watch.symbol === symbol);
-  /** Der laufende Kurs - egal aus welcher der beiden Quellen. */
-  const livePrice = liveActive
-    ? session?.last_prices?.[symbol]
-    : watchActive && watch?.last_price
-      ? watch.last_price
-      : undefined;
+
+  /** Kurs und laufende Kerze - gepusht, nicht abgefragt.
+   *
+   *  Der Server entscheidet, aus welcher Quelle sie kommen (Sitzung vor
+   *  Beobachtung) und in welchem Bucket die Kerze liegt. Hier wird nur
+   *  gezeichnet - genau wie beim Rest des Charts (Spec 27). */
+  const tick = useTickStream(symbol, timeframe, liveActive || watchActive);
+  /** Der laufende Kurs. Der Tickstrom zuerst; faellt er aus, bleibt der
+   *  Zustandsstrom als grobe Auskunft. */
+  const livePrice =
+    tick.price > 0
+      ? tick.price
+      : liveActive
+        ? session?.last_prices?.[symbol]
+        : watchActive && watch?.last_price
+          ? watch.last_price
+          : undefined;
+  /** Die laufende Kerze. `/api/bars` liefert sie mit, damit der Chart auch
+   *  ohne Strom stimmt; der Strom haelt sie zwischen zwei Abrufen aktuell. */
+  const liveBar = tick.bar ?? bars?.live ?? null;
 
   // --- Marktbeobachtung: Chart live, ohne Handel ---------------------------
   //
@@ -429,10 +509,8 @@ export default function App() {
     };
   }, [symbol, liveActive, instruments]);
 
-  // Kurs schnell nachfuehren. Der Zustandsstrom prueft einmal je Sekunde und
-  // traegt den ganzen Betriebszustand mit sich; fuer eine Kursanzeige, die sich
-  // bewegt wie in NinjaTrader, ist das zu grob und zu schwer. Deshalb eine
-  // eigene, sehr schlanke Abfrage.
+  // Zustand der Beobachtung nachfuehren - Zaehler und Verbindung, nicht den
+  // Kurs. Der kommt ueber den Tickstrom.
   useEffect(() => {
     if (!watchActive) return;
     let cancelled = false;
@@ -443,7 +521,7 @@ export default function App() {
           if (!cancelled) setWatch(zustand);
         })
         .catch(() => undefined);
-    }, PRICE_REFRESH_MS);
+    }, WATCH_STATE_MS);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
@@ -597,7 +675,7 @@ export default function App() {
         <StatusBar
           health={health}
           instrument={null}
-          snapshot={null}
+          market={market}
           coverage={[]}
           symbols={[]}
           withData={new Set()}
@@ -622,7 +700,7 @@ export default function App() {
       <StatusBar
         health={health}
         instrument={instrument}
-        snapshot={snapshot}
+        market={market}
         coverage={coverage}
         symbols={symbols}
         withData={symbolsWithData}
@@ -681,7 +759,10 @@ export default function App() {
               overlays={overlays}
               toggles={toggles}
               priceDecimals={instrument?.price_decimals ?? 2}
-              livePrice={livePrice}
+              liveBar={liveBar}
+              // Bis /health da ist UTC: eine geratene Zone waere schlimmer als
+              // eine erkennbar unlokalisierte.
+              timeZone={health?.display_timezone ?? 'UTC'}
             />
             {/* ECHTZEIT bedeutet Handelsbetrieb, BEOBACHTUNG nur Zusehen. Der
                 Unterschied muss sichtbar sein: im einen Fall koennen Orders
@@ -693,6 +774,14 @@ export default function App() {
                   <span className="chart-live__price">
                     {livePrice.toFixed(instrument?.price_decimals ?? 2)}
                   </span>
+                )}
+                {/* Daten bei geschlossener Boerse sind kein Widerspruch:
+                    Historie, verzoegerte Kurse und ein Simulationsfeed laufen
+                    auch dann ein. Verschweigen waere aber das Schlimmste -
+                    ein sich bewegender Chart sieht nach offenem Markt aus.
+                    Massgeblich ist der Handelskalender, nicht der Datenstrom. */}
+                {market && !market.is_open && (
+                  <span className="chart-live__note">{de.chart.marketClosedData}</span>
                 )}
               </div>
             )}

@@ -27,8 +27,37 @@ export interface BarsResponse {
   symbol: string;
   timeframe: string;
   bars: Bar[];
-  /** Die noch laufende Bar. Wird gezeichnet, aber nie ausgewertet. */
+  /** Zwischenstand aus GESCHLOSSENEN Basis-Bars. Wird gezeichnet, nie ausgewertet. */
   forming: Bar | null;
+  /** Die Kerze, die sich gerade bildet - aus Ticks, nie analysiert. Liegt sie
+   *  im selben Bucket wie `forming`, ersetzt sie dieses; sonst kommt sie
+   *  dahinter. Null heisst: kein laufender Kurs. */
+  live: Bar | null;
+}
+
+/** Marktzustand zur Wanduhrzeit (`/api/market`).
+ *
+ *  Quelle ist der Handelskalender, NICHT der Datenstrom: Historie, verzoegerte
+ *  Kurse und ein Simulationsfeed laufen auch bei geschlossener Boerse ein. */
+export interface MarketStatus {
+  symbol: string;
+  /** Wanduhr des Servers. Ohne sie liesse sich ein geschlossener Markt nicht
+   *  von einer stehengebliebenen Anzeige unterscheiden. */
+  server_ts: number;
+  session: string;
+  is_open: boolean;
+  is_rth: boolean;
+  /** Boersenzeitzone - die Zone, in der diese Aussage gilt. */
+  timezone: string;
+}
+
+/** Eine Meldung des Kursstroms (`/api/ticks`). Bewusst winzig: nur der
+ *  neueste Kurs und die laufende Kerze, keine Sitzungsdaten. */
+export interface TickEvent {
+  symbol: string;
+  timeframe: string;
+  price: number;
+  bar: Bar | null;
 }
 
 export interface Reason {
@@ -207,6 +236,9 @@ export interface Health {
   symbol: string;
   config_hash: string;
   strategy_version: string;
+  /** IANA-Zeitzone fuer alle sichtbaren Zeitangaben (`app.display_timezone`).
+   *  Intern bleibt alles UTC - lokalisiert wird nur die Darstellung. */
+  display_timezone: string;
   providers: Provider[];
   warnings: string[];
 }

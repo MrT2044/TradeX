@@ -176,6 +176,40 @@ def watch_stop() -> WatchState:
     return _watch_state()
 
 
+class MarketStatusDto(BaseModel):
+    """Ist der Markt JETZT offen - nach Uhr und Handelskalender."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    symbol: str
+    server_ts: int
+    session: str
+    is_open: bool
+    is_rth: bool
+    timezone: str
+
+
+@router.get("/market")
+def market_status(symbol: str = Query(default="")) -> MarketStatusDto:
+    """Marktzustand zur Wanduhrzeit.
+
+    Bewusst NICHT aus ankommenden Daten abgeleitet: Historie, verzoegerte
+    Kurse und ein Simulationsfeed laufen auch bei geschlossener Boerse ein.
+    Wer daraus auf "offen" schliesst, baut eine Anzeige, die genau dann luegt,
+    wenn es darauf ankommt.
+    """
+    service = get_service()
+    status = service.market_status(symbol or service.config.data.default_symbol)
+    return MarketStatusDto(
+        symbol=status.symbol,
+        server_ts=status.server_ts,
+        session=status.session,
+        is_open=status.is_open,
+        is_rth=status.is_rth,
+        timezone=status.timezone,
+    )
+
+
 @router.get("/bars")
 def bars(
     symbol: str,
@@ -206,4 +240,10 @@ def bars(
             volume=series.volume[-limit:],
             roll_boundary=series.roll_boundary[-limit:],
         )
-    return BarsDto.of(symbol.upper(), tf.value, series, service.forming(symbol, tf))
+    return BarsDto.of(
+        symbol.upper(),
+        tf.value,
+        series,
+        service.forming(symbol, tf),
+        service.display_bar(symbol, tf),
+    )

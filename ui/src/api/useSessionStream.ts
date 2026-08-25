@@ -121,7 +121,12 @@ export function useSessionStream(): SessionStream {
       // geschlossen, sondern nur der Zustand vermerkt - bis die Stille zu
       // lang wird und der Rueckfall greift.
       source.addEventListener('error', () => {
-        if (!cancelled && mode !== 'polling') setMode('offline');
+        // Funktional statt ueber `mode`: der Effekt laeuft genau einmal, also
+        // hielte diese Funktion fuer immer den Wert vom ersten Rendern fest
+        // ('offline'). Die Bedingung war damit immer wahr, und ein einzelner
+        // Aussetzer schrieb "offline", obwohl der Rueckfall auf Abfragen
+        // laengst lief und Zahlen lieferte.
+        if (!cancelled) setMode((vorher) => (vorher === 'polling' ? vorher : 'offline'));
       });
 
       source.addEventListener('open', () => {

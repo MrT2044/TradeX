@@ -16,6 +16,7 @@ gegen echte Kursverlaeufe pruefen, bevor eine Strategie darauf aufbaut.
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -63,6 +64,21 @@ STRATEGY_VERSION = "phase3-strategy-v1"
 #: Antwort; ueber mehrere Jahre 1m-Daten waere das Fenster minutenlang taub.
 #: Fuer lange Zeitraeume gibt es `scripts/run_backtest.py`.
 MAX_BACKTEST_BARS = 1_500_000
+
+
+@dataclass(frozen=True, slots=True)
+class MarketStatus:
+    """Marktzustand zur Wanduhrzeit - unabhaengig davon, was gerade ankommt."""
+
+    symbol: str
+    server_ts: int
+    """Wanduhr des Servers. Gehoert dazu, weil der Betrachter sonst nicht
+    unterscheiden kann, ob der Markt zu ist oder die Anzeige steht."""
+    session: str
+    is_open: bool
+    is_rth: bool
+    timezone: str
+    """Boersenzeitzone des Instruments - die Zone, in der diese Aussage gilt."""
 
 
 @dataclass
@@ -436,18 +452,151 @@ class TradexService:
         muesste jeder Endpunkt sie einzeln treffen, und der erste, der es
         vergisst, zeigt im Betrieb alte Kurse an.
         """
-        live = self.sessions.context(symbol)
+        # Nur eine LAUFENDE Sitzung hat Vorrang. Der `SessionManager` haelt
+        # seine beendete Sitzung absichtlich fest; ohne diese Bedingung blieb
+        # der Chart nach jedem Stopp auf dem eingefrorenen Endstand stehen,
+        # auch wenn die Beobachtung laengst wieder Bars lieferte.
+        live = self.sessions.context(symbol) if self.sessions.is_running else None
         return live if live is not None else self.state(symbol).context
 
     def is_live(self, symbol: str) -> bool:
-        """Kommt der Chart gerade aus dem laufenden Betrieb?"""
-        return self.sessions.context(symbol) is not None
+        """Kommt der Chart gerade aus dem LAUFENDEN Betrieb?
+
+        `is_running` ist noetig, weil der `SessionManager` seine Sitzung beim
+        Stopp absichtlich stehen laesst - sonst meldete diese Auskunft nach
+        jeder beendeten Sitzung bis zum Programmende "live".
+        """
+        return self.sessions.is_running and self.sessions.context(symbol) is not None
 
     def bars(self, symbol: str, timeframe: Timeframe, limit: int | None = None) -> BarSeries:
         return self.chart_context(symbol).series(timeframe)
 
     def forming(self, symbol: str, timeframe: Timeframe) -> Bar | None:
         return self.chart_context(symbol).forming(timeframe)
+
+    # -------------------------------------------------------- Marktzustand
+    def market_status(self, symbol: str) -> MarketStatus:
+        """Ist der Markt JETZT offen - nach Uhr und Handelskalender.
+
+        Die Anzeige las das bisher aus `snapshot.session`, also aus der
+        Session der zuletzt ANALYSIERTEN Bar. Fuer eine Wiedergabe ist das
+        richtig, im Betrieb ist es falsch: liegt der geladene Bestand ein paar
+        Tage zurueck, meldet die Kopfzeile "geschlossen", waehrend nebenan
+        Ticks hereinlaufen. Zwei Quellen fuer dieselbe Frage - und die
+        auffaelligere von beiden war die falsche.
+
+        Bewusst NICHT aus ankommenden Daten abgeleitet. Historie, verzoegerte
+        Kurse und ein Simulationsfeed kommen auch bei geschlossener Boerse an;
+        wer daraus auf "offen" schliesst, baut sich eine Anzeige, die genau
+        dann luegt, wenn es darauf ankommt. Der Kalender weiss es, die
+        Datenlage nicht.
+        """
+        symbol = symbol.upper()
+        try:
+            instrument = get_instrument(symbol)
+        except LookupError:
+            instrument = get_instrument(self.config.data.default_symbol)
+        now = time.time_ns()
+        info = SessionCalendar(instrument).info_at(now)
+        return MarketStatus(
+            symbol=symbol,
+            server_ts=now,
+            session=info.session.value,
+            is_open=info.is_open,
+            is_rth=info.is_rth,
+            timezone=instrument.exchange_timezone,
+        )
+
+    # ------------------------------------------------------- Laufende Kerze
+    def _tick_source(self, symbol: str) -> tuple[Bar | None, int]:
+        """(laufende Tickbar, Wanduhr des letzten Ticks) - Sitzung vor Beobachtung.
+
+        Dieselbe Rangfolge wie `chart_context`, und aus demselben Grund: Kurse
+        und Kerzen muessen aus derselben Quelle kommen. Zwei Quellen
+        nebeneinander faellt niemandem auf und ist genau deshalb gefaehrlich.
+        """
+        symbol = symbol.upper()
+        # `is_running` gehoert dazu: `SessionManager` raeumt `_session` und
+        # `_feed` beim Stopp NICHT weg (der Abschlussbericht braucht sie noch).
+        # Ohne diese Bedingung zeigte die Kerze nach dem Beenden einer Sitzung
+        # weiter auf deren toten Feed - der Kurs stand still, waehrend die
+        # inzwischen wieder laufende Beobachtung daneben Ticks bekam. Ein
+        # eingefrorener Kurs sieht aus wie ein ruhiger Markt.
+        if self.sessions.is_running and self.sessions.context(symbol) is not None:
+            return self.sessions.live_bar(symbol), self.sessions.last_tick_ts(symbol)
+        watch = self._watch
+        if watch is not None and watch.is_running and watch.symbol == symbol:
+            return watch.live_bar(), watch.last_tick_ts
+        return None, 0
+
+    def last_price(self, symbol: str) -> float:
+        """Zuletzt gehandelter Kurs - nur zur Anzeige."""
+        bar, _ = self._tick_source(symbol)
+        return bar.close if bar is not None else 0.0
+
+    def display_bar(self, symbol: str, timeframe: Timeframe) -> Bar | None:
+        """Die Kerze, die sich GERADE bildet - gezeichnet, nie analysiert.
+
+        Warum es sie ueberhaupt braucht: das NinjaTrader-AddOn sendet
+        ausschliesslich geschlossene Bars (Invariante 1). Um 14:21:36 ist die
+        letzte davon die von 14:20, und `forming` fuer eine hoehere Zeitebene
+        besteht nur aus solchen geschlossenen Minuten. Die Minute, die gerade
+        laeuft, kennt die Engine also gar nicht - der Chart hing genau eine
+        Minute hinterher, und ein Tickkurs bewegte die falsche Kerze.
+
+        Zusammengesetzt wird sie aus zwei Teilen, und beide sind schon da:
+        `forming` liefert Eroeffnung, Hoch und Tief der bereits geschlossenen
+        Minuten dieses Buckets, die Tickbar den Rest bis jetzt. Der Bucket
+        kommt aus demselben Raster wie die Analyse (`context.bucket_start`) -
+        eine eigene Rechnung waere eine zweite Wahrheit.
+
+        None heisst: es gibt nichts Laufendes zu zeigen. Dann bleibt es bei
+        `forming`, also beim bisherigen Verhalten.
+        """
+        live, tick_ts = self._tick_source(symbol)
+        if live is None:
+            return None
+        alter = (time.time_ns() - tick_ts) / 1e9 if tick_ts else float("inf")
+        if alter > self.config.live.display_tick_max_age_seconds:
+            # Veraltet. Eine Kerze stehenzulassen, die wie eine laufende
+            # aussieht, waere schlimmer als gar keine.
+            return None
+
+        context = self.chart_context(symbol)
+        bucket = context.bucket_start(live.ts, timeframe)
+        series = context.series(timeframe)
+        if len(series) and bucket <= int(series.ts[-1]):
+            # Der Tick gehoert in einen Bucket, der bereits geschlossen und
+            # analysiert ist. Ihn zu zeichnen erzeugte eine zweite Kerze mit
+            # demselben Zeitstempel.
+            return None
+
+        forming = context.forming(timeframe)
+        if forming is not None and forming.ts > bucket:
+            # Der Tick ist aelter als der Zwischenstand. Kommt bei einem
+            # Neustart des Feeds vor; eine Kerze davor zu zeichnen liefe der
+            # Zeit entgegen.
+            return None
+        if forming is None or forming.ts != bucket:
+            # Kein Zwischenstand fuer diesen Bucket - entweder ist er gerade
+            # erst angebrochen, oder `forming` haengt noch im vorigen (genau
+            # der Fall, der auf 1m immer eintritt).
+            return Bar(
+                ts=bucket,
+                open=live.open,
+                high=live.high,
+                low=live.low,
+                close=live.close,
+                volume=live.volume,
+            )
+        return Bar(
+            ts=bucket,
+            open=forming.open,
+            high=max(forming.high, live.high),
+            low=min(forming.low, live.low),
+            close=live.close,
+            volume=forming.volume + live.volume,
+        )
 
     # ------------------------------------------------------------------ Strategie
     def strategy(self, symbol: str) -> StrategyPortfolio:
@@ -458,7 +607,7 @@ class TradexService:
         aus einer Wiedergabe, die vielleicht Wochen woanders steht. Das faellt
         nicht auf und ist genau deshalb gefaehrlich.
         """
-        live = self.sessions.strategy(symbol)
+        live = self.sessions.strategy(symbol) if self.sessions.is_running else None
         return live if live is not None else self.state(symbol).strategy
 
     def decisions(self, symbol: str, limit: int = 50) -> list[StrategyDecision]:
