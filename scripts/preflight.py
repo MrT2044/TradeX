@@ -1,4 +1,4 @@
-"""Startpruefung: laeuft alles, was TradeX braucht?
+﻿"""Startpruefung: laeuft alles, was TradeX braucht?
 
 Aufgerufen von `start_tradex.bat` - vor dem Start als Vorpruefung, nach dem
 Start als Gesundheitspruefung des laufenden Systems.
@@ -135,76 +135,46 @@ def pruefe_broker() -> list[Befund]:
         )
     )
 
-    # Ab hier haengt es davon ab, WELCHE Anbindung Orders sendet. Die Stufen
-    # gegen die jeweils andere zu pruefen waere schlimmer als sie
-    # wegzulassen: ein rotes "kein Gateway auf 127.0.0.1:4002" bei einer
-    # NinjaTrader-Anbindung bringt einem bei, rote Zeilen zu ignorieren.
-    if config.broker.provider == "nt8":
-        host, port = config.broker.nt8.host, config.broker.nt8.port
-        erreichbar = _port_offen(host, port)
-        befunde.append(
-            Befund(
-                "NinjaTrader-Bridge",
-                erreichbar,
-                # Dieselbe Leitung wie die Marktdatenstufe weiter oben - dort
-                # ist ihr Ausfall ein Hinweis (Wiedergabe geht weiter), hier
-                # ein kritischer Befund: `broker.enabled` ist an, und ohne
-                # Bridge geht keine Order hinaus. Der Zusatz steht dabei,
-                # damit zwei Zeilen zur selben Adresse nicht wie ein Fehler
-                # der Anzeige aussehen.
-                f"{host}:{port} (dieselbe Bridge wie die Marktdaten)"
-                if erreichbar
-                else f"keine Bridge auf {host}:{port} - ohne sie geht keine Order hinaus",
-            )
-        )
-        # Der Kontoname steht in der Config, das Urteil faellt das AddOn
-        # (`Account.Provider == Provider.Simulator`). Hier laesst sich nur
-        # pruefen, dass ueberhaupt eines benannt ist - "das erste passende"
-        # waere sonst das Backtest-Konto mit net_liquidation 0.
-        konto = config.broker.nt8.account.strip()
-        befunde.append(
-            Befund(
-                "Simulationskonto",
-                bool(konto),
-                konto if konto else "broker.nt8.account ist leer - Konto wird geraten",
-                kritisch=False,
-            )
-        )
-        fehlend = [
-            symbol
-            for symbol, instrument in get_instruments().items()
-            if not instrument.nt8_symbol
-        ]
-        befunde.append(
-            Befund(
-                "NT8-Kontrakte",
-                len(fehlend) < len(get_instruments()),
-                f"ohne nt8_symbol: {', '.join(fehlend)}" if fehlend else "alle hinterlegt",
-                kritisch=False,
-            )
-        )
-        return befunde
-
-    host, port = config.broker.ibkr.host, config.broker.ibkr.paper_port
+    host, port = config.broker.nt8.host, config.broker.nt8.port
     erreichbar = _port_offen(host, port)
     befunde.append(
         Befund(
-            "IB Gateway",
+            "NinjaTrader-Bridge",
             erreichbar,
-            f"{host}:{port}" if erreichbar else f"kein Gateway auf {host}:{port}",
+            # Dieselbe Leitung wie die Marktdatenstufe weiter oben - dort
+            # ist ihr Ausfall ein Hinweis (Wiedergabe geht weiter), hier
+            # ein kritischer Befund: `broker.enabled` ist an, und ohne
+            # Bridge geht keine Order hinaus. Der Zusatz steht dabei,
+            # damit zwei Zeilen zur selben Adresse nicht wie ein Fehler
+            # der Anzeige aussehen.
+            f"{host}:{port} (dieselbe Bridge wie die Marktdaten)"
+            if erreichbar
+            else f"keine Bridge auf {host}:{port} - ohne sie geht keine Order hinaus",
         )
     )
-
+    # Der Kontoname steht in der Config, das Urteil faellt das AddOn
+    # (`Account.Provider == Provider.Simulator`). Hier laesst sich nur
+    # pruefen, dass ueberhaupt eines benannt ist - "das erste passende"
+    # waere sonst das Backtest-Konto mit net_liquidation 0.
+    konto = config.broker.nt8.account.strip()
+    befunde.append(
+        Befund(
+            "Simulationskonto",
+            bool(konto),
+            konto if konto else "broker.nt8.account ist leer - Konto wird geraten",
+            kritisch=False,
+        )
+    )
     fehlend = [
         symbol
         for symbol, instrument in get_instruments().items()
-        if instrument.ibkr is None or not instrument.ibkr.is_complete
+        if not instrument.nt8_symbol
     ]
     befunde.append(
         Befund(
-            "IBKR-Kontrakte",
+            "NT8-Kontrakte",
             len(fehlend) < len(get_instruments()),
-            f"ohne ibkr-Block: {', '.join(fehlend)}" if fehlend else "alle hinterlegt",
+            f"ohne nt8_symbol: {', '.join(fehlend)}" if fehlend else "alle hinterlegt",
             kritisch=False,
         )
     )

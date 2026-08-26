@@ -1,9 +1,10 @@
 """Die brokerunabhaengige Schnittstelle.
 
-Der Rest des Programms spricht ausschliesslich mit diesem Protokoll. IBKR-
-spezifischer Code liegt vollstaendig in `tradex/broker/ibkr/` - ein Test
-verbietet `ibapi`-Importe ausserhalb davon, damit die Trennung nicht mit der
-Zeit erodiert.
+Der Rest des Programms spricht ausschliesslich mit diesem Protokoll.
+Brokerspezifischer Code liegt vollstaendig in einem Adapter - heute
+`tradex/broker/nt8/`, davor `ibkr/`. Dass sich die IBKR-Anbindung in Phase 9
+entfernen liess, ohne diese Datei anzufassen, war die Probe darauf, dass die
+Trennung haelt.
 
 Was hier bewusst NICHT steht: irgendeine Handelsregel. Ein Broker fuehrt aus,
 er entscheidet nicht. Position, Groesse und Ausstiegskurse kommen fertig aus

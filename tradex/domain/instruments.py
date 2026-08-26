@@ -1,4 +1,4 @@
-"""Instrument- und Session-Modelle.
+﻿"""Instrument- und Session-Modelle.
 
 Reine Datenstrukturen ohne I/O. Geladen werden sie von `tradex.config`
 aus `config/instruments.yaml`.
@@ -58,44 +58,6 @@ class TradingHours:
     daily_reset: time
 
 
-@dataclass(frozen=True, slots=True)
-class IbkrContract:
-    """Wie dieses Instrument bei Interactive Brokers heisst.
-
-    Ein Symbolstring reicht dort nicht: "MNQ" allein bezeichnet keinen
-    handelbaren Kontrakt, sondern eine Familie. Erst Typ, Boerse, Waehrung und
-    Verfallmonat machen ihn eindeutig - und genau das prueft der Adapter vor
-    dem ersten Handel ueber `reqContractDetails` nach.
-
-    Dieselbe Ueberlegung wie bei `Instrument.nt8_symbol`: hinterlegt statt
-    geraten. **Beim Kontraktwechsel muss `expiry` nachgezogen werden.** Eine
-    Automatik, die still den falschen Monat zieht, waere schlimmer als eine
-    Angabe, die veraltet und dann auffaellt.
-    """
-
-    symbol: str
-    """Das IBKR-Wurzelsymbol - nicht zwingend gleich dem TradeX-Symbol."""
-    sec_type: str = "FUT"
-    exchange: str = ""
-    currency: str = "USD"
-    expiry: str = ""
-    """`lastTradeDateOrContractMonth`: YYYYMM oder YYYYMMDD. Leer = nicht gesetzt."""
-    multiplier: str = ""
-    local_symbol: str = ""
-    """Exakter Kontraktname, etwa "MNQU6". Gesetzt schlaegt er `expiry`."""
-    trading_class: str = ""
-
-    @property
-    def is_complete(self) -> bool:
-        """Reicht die Angabe, um ueberhaupt eine Abfrage zu starten?
-
-        Ein Future ohne Verfall UND ohne local_symbol ist mehrdeutig - genau der
-        Fall, in dem nicht geraten werden darf.
-        """
-        if not self.symbol or not self.exchange:
-            return False
-        return not (self.sec_type == "FUT" and not self.expiry and not self.local_symbol)
-
 
 @dataclass(frozen=True, slots=True)
 class Instrument:
@@ -136,12 +98,11 @@ class Instrument:
     zieht.
 
     Der Preis dafuer: **beim Kontraktwechsel muss der Wert nachgezogen
-    werden.** Nur der nt8-Feed benutzt ihn; Backtest und Wiedergabe merken
+    werden.** Seit Phase 9 gilt er fuer BEIDE Wege - Feed und Orders. Fehlt er,
+    ist das Instrument lautlos nicht handelbar: NinjaTrader loest dann den
+    generischen Wurzeleintrag auf, der keine Marktdaten hat, nimmt die Order an
+    und lehnt sie zwanzig Sekunden spaeter ab. Backtest und Wiedergabe merken
     davon nichts."""
-    ibkr: IbkrContract | None = None
-    """Kontraktbeschreibung fuer Interactive Brokers; None = dort nicht
-    handelbar. Fehlt sie, lehnt der Broker-Adapter jede Order fuer dieses
-    Symbol ab, statt einen Kontrakt zu erfinden."""
     _tzinfo: ZoneInfo = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:

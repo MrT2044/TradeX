@@ -411,6 +411,49 @@ nicht antworten, also vergibt der Adapter den Grund selbst.
 unbekanntes Konto wird als `account_not_simulated` abgelehnt. Das ist die
 sichere Richtung — ein Konto, das es nicht gibt, ist kein Simulationskonto.
 
+### Nachgewiesen am 26.08.2026 (NT 8.1.8.2, Sim101)
+
+Die vollständige Kette, gegen ein laufendes NinjaTrader:
+
+```
+Entry     submitted → accepted → filled @ 29162.00
+Stop      accepted   (echte StopMarket-Order, OCO)
+Ziel      accepted   (echte Limit-Order, OCO)
+Position  MNQ 1
+Aufräumen Stop+Ziel cancelled → Close filled @ 29162.75 → Position 0
+```
+
+**Drei Fehler standen davor**, und alle drei sahen von außen gleich aus
+(„die Order geht nicht raus"):
+
+1. `account_query` reichte den Kontonamen nicht durch. `Sim101` **und**
+   `Backtest` sind beide `Provider.Simulator`; die Auflösung lehnte wegen
+   Mehrdeutigkeit ab — eine Sicherheitsstufe, die richtig arbeitete, während
+   die Frage falsch gestellt war.
+2. Die **Rolle** wurde nicht gelesen. Alle drei Orders einer Klammer tragen
+   denselben `order_key`; das AddOn schickt die Rolle in einem eigenen Feld.
+   Stop- und Zielmeldungen landeten auf der Entry-Order, die Klammerteile
+   blieben für immer `submitted`. Bei `execution` fehlte das Feld ganz.
+3. **Der Orderweg übersetzte das Wurzelsymbol nicht.** Hinaus ging `MNQ`
+   statt `MNQ SEP26` — NinjaTrader löste den generischen Eintrag auf, der
+   keine Marktdaten hat, nahm die Order an und lehnte sie zwanzig Sekunden
+   später ab: *„There is no market data available to drive the simulation
+   engine"*. Im Log stand `Instrument='MNQ'`. Der Feed übersetzt seit jeher;
+   dass der Orderweg es nicht tat, fällt nirgends auf außer am abgelehnten
+   Auftrag.
+
+Dazu eine Betriebsbedingung: **der Simulationsmotor füllt nur bei aktivem
+Marktdaten-Abonnement.** Im Betrieb stellt sich das nicht — dort läuft der
+Feed. Für das eigenständige Prüfskript hält `nt8_paper_order.py` deshalb
+selbst eines offen, über den ganzen Lauf inklusive Aufräumen: Glattstellen ist
+selbst eine Order und braucht dieselben Daten.
+
+**`commission` war bei beiden Füllungen 0.** Sim101 rechnet ohne Gebühren,
+solange kein Commission-Template gesetzt ist. Das ist keine Fehlfunktion, aber
+es macht Papertrades **optimistischer als den Backtest**, dessen
+Ausführungsannahmen bewusst pessimistisch sind (Spec §29). Wer beide
+vergleichen will, muss in NinjaTrader ein Gebührenmodell hinterlegen.
+
 ### Live-Trading
 
 Unverändert gesperrt. `execution.live_trading_enabled` steht auf `false`, und

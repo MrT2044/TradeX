@@ -1,4 +1,4 @@
-"""Reason-Codes fuer die Begruendungsanzeige (Spec §23, §25).
+﻿"""Reason-Codes fuer die Begruendungsanzeige (Spec Â§23, Â§25).
 
 Das Backend liefert NIE fertige Saetze, sondern Code + Parameter. Uebersetzt
 wird erst im UI (`ui/src/i18n/de.ts`).
@@ -14,34 +14,34 @@ from __future__ import annotations
 
 from typing import Final
 
-# --- HTF Bias (Spec §7 Schritt 1) -------------------------------------------
+# --- HTF Bias (Spec Â§7 Schritt 1) -------------------------------------------
 HTF_BIAS: Final = "htf.bias"
 HTF_STRUCTURE: Final = "htf.structure"
 HTF_FVG_BALANCE: Final = "htf.fvg_balance"
 HTF_LIQUIDITY_DRAW: Final = "htf.liquidity_draw"
 
-# --- Liquidity Sweep (Spec §7 Schritt 2) ------------------------------------
+# --- Liquidity Sweep (Spec Â§7 Schritt 2) ------------------------------------
 SWEEP_FOUND: Final = "sweep.found"
 SWEEP_MISSING: Final = "sweep.missing"
 
-# --- Displacement (Spec §7 Schritt 3) ---------------------------------------
+# --- Displacement (Spec Â§7 Schritt 3) ---------------------------------------
 DISPLACEMENT_FOUND: Final = "displacement.found"
 DISPLACEMENT_MISSING: Final = "displacement.missing"
 DISPLACEMENT_VOLUME: Final = "displacement.volume_confirmed"
 
-# --- FVG (Spec §7 Schritt 4) ------------------------------------------------
+# --- FVG (Spec Â§7 Schritt 4) ------------------------------------------------
 FVG_FOUND: Final = "fvg.found"
 FVG_MISSING: Final = "fvg.missing"
 
-# --- Retracement (Spec §7 Schritt 5) ----------------------------------------
+# --- Retracement (Spec Â§7 Schritt 5) ----------------------------------------
 RETRACEMENT_FOUND: Final = "retracement.found"
 RETRACEMENT_MISSING: Final = "retracement.missing"
 
-# --- Market Structure Shift (Spec §7 Schritt 6) -----------------------------
+# --- Market Structure Shift (Spec Â§7 Schritt 6) -----------------------------
 MSS_FOUND: Final = "mss.found"
 MSS_MISSING: Final = "mss.missing"
 
-# --- Setup-Lebenszyklus (Spec §7-§9) ----------------------------------------
+# --- Setup-Lebenszyklus (Spec Â§7-Â§9) ----------------------------------------
 SETUP_STARTED: Final = "setup.started"
 SETUP_INVALIDATED_BEYOND_SWEEP: Final = "setup.invalidated_beyond_sweep"
 SETUP_INVALIDATED_BIAS_FLIP: Final = "setup.invalidated_bias_flip"
@@ -52,7 +52,7 @@ SETUP_CROWDED_OUT: Final = "setup.crowded_out"
 OPENING_RANGE_BREAKOUT: Final = "opening_range.breakout"
 SETUP_COMPLETE: Final = "setup.complete"
 
-# --- Stop Loss (Spec §11) ---------------------------------------------------
+# --- Stop Loss (Spec Â§11) ---------------------------------------------------
 STOP_PLACED: Final = "stop.placed"
 STOP_TOO_WIDE: Final = "stop.too_wide"
 STOP_TOO_TIGHT: Final = "stop.too_tight"
@@ -61,13 +61,13 @@ STOP_TOO_TIGHT: Final = "stop.too_tight"
 #: Grund, der nicht zutrifft, und die Suche liefe in die falsche Richtung.
 STOP_NO_ATR: Final = "stop.no_atr"
 
-# --- Take Profit (Spec §12) -------------------------------------------------
+# --- Take Profit (Spec Â§12) -------------------------------------------------
 TARGET_LIQUIDITY: Final = "target.liquidity"
 TARGET_FALLBACK: Final = "target.fallback_r_multiple"
 TARGET_NONE: Final = "target.none"
 TARGET_RR_TOO_LOW: Final = "target.rr_too_low"
 
-# --- Risiko (Spec §10, §24) -------------------------------------------------
+# --- Risiko (Spec Â§10, Â§24) -------------------------------------------------
 RISK_SIZE_OK: Final = "risk.size_ok"
 RISK_SIZE_ZERO: Final = "risk.size_zero"
 RISK_SIZE_CAPPED: Final = "risk.size_capped"
@@ -78,7 +78,7 @@ RISK_DISABLED: Final = "risk.disabled"
 RISK_COOLDOWN_AFTER_TRADE: Final = "risk.cooldown_after_trade"
 RISK_COOLDOWN_AFTER_LOSS: Final = "risk.cooldown_after_loss"
 
-# --- Handelsfenster (Spec §13) ----------------------------------------------
+# --- Handelsfenster (Spec Â§13) ----------------------------------------------
 WINDOW_SESSION_BLOCKED: Final = "window.session_blocked"
 WINDOW_VOLATILITY_LOW: Final = "window.volatility_low"
 WINDOW_VOLATILITY_HIGH: Final = "window.volatility_high"
@@ -96,7 +96,7 @@ NEWS_OK: Final = "news.ok"
 DECISION_TRADE: Final = "decision.trade"
 DECISION_NO_TRADE: Final = "decision.no_trade"
 
-# --- Datenqualitaet und Betriebszustand (Spec §24) --------------------------
+# --- Datenqualitaet und Betriebszustand (Spec Â§24) --------------------------
 DATA_WARMUP: Final = "data.warmup"
 DATA_GAP: Final = "data.gap"
 DATA_ROLL: Final = "data.roll_boundary"
@@ -105,7 +105,7 @@ SYSTEM_HALTED: Final = "system.halted"
 """Not-Aus des laufenden Betriebs. Keine neuen Positionen; offene laufen
 weiter zu ihrem Stop."""
 
-# --- Orderanbindung (Spec §24, Phase 8) -------------------------------------
+# --- Orderanbindung (Spec Paragraph 24, Phase 9) ----------------------------
 # Jede Stufe der Sicherheitskette hat ihren EIGENEN Code. Ein gemeinsames
 # "Broker hat abgelehnt" waere im Betrieb wertlos: die Frage am naechsten
 # Morgen lautet nicht ob, sondern woran es lag.
@@ -113,15 +113,13 @@ BROKER_DISABLED: Final = "broker.disabled"
 BROKER_MODE_NOT_PAPER: Final = "broker.mode_not_paper"
 BROKER_LIVE_BLOCKED: Final = "broker.live_blocked"
 BROKER_TRADING_DISABLED: Final = "broker.trading_disabled"
-BROKER_PORT_NOT_PAPER: Final = "broker.port_not_paper"
-#: NinjaTrader-Gegenstueck zu `BROKER_PORT_NOT_PAPER`. Nicht derselbe Code,
-#: weil es nicht dieselbe Aussage ist: der Port sagt nur, wohin verbunden
-#: wurde, `Account.Provider` ist eine Eigenschaft des Kontos.
+#: Der Paper-Nachweis: `Account.Provider == Provider.Simulator`, entschieden
+#: im NinjaTrader-AddOn. Die abgeloeste IBKR-Anbindung brauchte dafuer drei
+#: Codes (Port, Konto, Kontrakt) - hier genuegt einer, weil die Auskunft eine
+#: Eigenschaft des Kontos ist und keine Zusammensetzung aus Indizien.
 BROKER_ACCOUNT_NOT_SIMULATED: Final = "broker.account_not_simulated"
 BROKER_NOT_CONNECTED: Final = "broker.not_connected"
-BROKER_ACCOUNT_UNCONFIRMED: Final = "broker.account_unconfirmed"
 BROKER_CONTRACT_UNKNOWN: Final = "broker.contract_unknown"
-BROKER_CONTRACT_AMBIGUOUS: Final = "broker.contract_ambiguous"
 BROKER_DATA_STALE: Final = "broker.data_stale"
 BROKER_RATE_LIMITED: Final = "broker.rate_limited"
 BROKER_DUPLICATE_SIGNAL: Final = "broker.duplicate_signal"
@@ -188,12 +186,9 @@ ALL_CODES: Final[tuple[str, ...]] = (
     BROKER_MODE_NOT_PAPER,
     BROKER_LIVE_BLOCKED,
     BROKER_TRADING_DISABLED,
-    BROKER_PORT_NOT_PAPER,
     BROKER_ACCOUNT_NOT_SIMULATED,
     BROKER_NOT_CONNECTED,
-    BROKER_ACCOUNT_UNCONFIRMED,
     BROKER_CONTRACT_UNKNOWN,
-    BROKER_CONTRACT_AMBIGUOUS,
     BROKER_DATA_STALE,
     BROKER_RATE_LIMITED,
     BROKER_DUPLICATE_SIGNAL,

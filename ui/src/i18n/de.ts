@@ -176,19 +176,11 @@ export const reasonText: Record<string, (p: ReasonParams) => string> = {
     'Live-Trading ist gesperrt - es wird grundsaetzlich keine Order gesendet',
   'broker.trading_disabled': (p) =>
     `Not-Aus der Umgebung aktiv (${p.quelle ?? 'TRADING_ENABLED=false'})`,
-  'broker.port_not_paper': (p) =>
-    `Port ${p.port} ist nicht der Paper-Port ${p.erwartet} - keine Order`,
-  'broker.not_connected': () => 'Keine Verbindung zum IB Gateway - Order wird nicht gesammelt',
-  'broker.account_unconfirmed': (p) =>
-    `Konto ${p.account ?? 'unbekannt'} nicht eindeutig als Paper-Konto bestaetigt`,
-  // NinjaTrader-Gegenstueck. Bewusst ein eigener Code: "unbestaetigt" heisst,
-  // der Nachweis fehlt - "nicht simuliert" heisst, er liegt vor und faellt
-  // negativ aus.
+  'broker.not_connected': () =>
+    'Keine Verbindung zur NinjaTrader-Bridge - Order wird nicht gesammelt',
   'broker.account_not_simulated': (p) =>
     `Konto ${p.account ?? 'unbekannt'} ist kein Simulationskonto (${p.nachweis ?? 'ohne Nachweis'})`,
-  'broker.contract_unknown': (p) => `Fuer ${p.symbol} ist kein IBKR-Kontrakt hinterlegt`,
-  'broker.contract_ambiguous': (p) =>
-    `Kontrakt fuer ${p.symbol} nicht eindeutig (${p.treffer} Treffer) - es wird nicht geraten`,
+  'broker.contract_unknown': (p) => `Fuer ${p.symbol} ist kein nt8_symbol hinterlegt`,
   'broker.data_stale': (p) =>
     `Kursdaten sind ${num(p.alter_sekunden, 1)}s alt (erlaubt: ${num(p.erlaubt_sekunden, 1)}s)`,
   'broker.rate_limited': (p) => `Orderfrequenz erreicht (${p.limit} pro Minute)`,
@@ -237,12 +229,9 @@ export const reasonLabel: Record<string, string> = {
   'broker.mode_not_paper': 'Handelsmodus erlaubt keine Orders',
   'broker.live_blocked': 'Live-Trading gesperrt',
   'broker.trading_disabled': 'Not-Aus der Umgebung aktiv',
-  'broker.port_not_paper': 'Kein Paper-Port',
   'broker.not_connected': 'Keine Broker-Verbindung',
-  'broker.account_unconfirmed': 'Paper-Konto nicht bestaetigt',
   'broker.account_not_simulated': 'Kein Simulationskonto',
-  'broker.contract_unknown': 'Kein IBKR-Kontrakt hinterlegt',
-  'broker.contract_ambiguous': 'Kontrakt nicht eindeutig',
+  'broker.contract_unknown': 'Kein nt8_symbol hinterlegt',
   'broker.data_stale': 'Kursdaten zu alt',
   'broker.rate_limited': 'Orderfrequenz erreicht',
   'broker.duplicate_signal': 'Signal bereits gesendet',

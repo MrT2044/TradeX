@@ -1,4 +1,4 @@
-# Instrument- und Session-Definitionen.
+﻿# Instrument- und Session-Definitionen.
 #
 # Kontraktspezifikationen verifiziert gegen CME Group (Stand 2026-08):
 #   MNQ  Micro E-mini Nasdaq-100 : Tick 0.25 Indexpunkte = $0.50 ; Multiplikator $2  / Punkt
@@ -51,20 +51,13 @@ instruments:
     databento_continuous: "MNQ.c.0"     # volumenbasierter Roll, Front Month
     # Kontraktname in NinjaTrader. MUSS beim Roll nachgezogen werden - ein
     # blankes "MNQ" lehnt der Datenanbieter mit "Symbol is inaccessible" ab
-    # (an NinjaTrader 8.1.8.2 gemessen). Nur fuer den nt8-Feed relevant.
+    # (an NinjaTrader 8.1.8.2 gemessen).
+    #
+    # Seit Phase 9 gilt der Name fuer BEIDE Wege, Feed UND Orders. Fehlt er,
+    # ist das Instrument lautlos nicht handelbar: NinjaTrader loest dann den
+    # generischen Wurzeleintrag auf, der keine Marktdaten hat, nimmt die Order
+    # an und lehnt sie zwanzig Sekunden spaeter ab.
     nt8_symbol: "MNQ SEP26"
-    # Kontrakt bei Interactive Brokers. Genau wie nt8_symbol MUSS `expiry` beim
-    # Roll nachgezogen werden. Der Adapter loest ihn vor dem ersten Handel ueber
-    # reqContractDetails auf und verweigert den Handel bei 0 oder mehreren
-    # Treffern - geraten wird nicht.
-    ibkr:
-      symbol: MNQ
-      sec_type: FUT
-      exchange: CME
-      currency: USD
-      expiry: "202609"                  # muss zu nt8_symbol passen (SEP26)
-      multiplier: "2"                   # = point_value
-      trading_class: MNQ
     tick_size: 0.25                     # Indexpunkte
     tick_value: 0.50                    # USD pro Tick
     point_value: 2.00                   # USD pro Indexpunkt
@@ -79,16 +72,8 @@ instruments:
     # Wurzelsymbol. Fehlte der Eintrag, waere NQ seit der Umstellung auf den
     # NT8-Orderweg gar nicht mehr handelbar - und zwar lautlos, weil das AddOn
     # erst beim Senden mit `instrument_unknown` ablehnt.
-    # MUSS beim Roll nachgezogen werden, gemeinsam mit `expiry` unten.
+    # MUSS beim Roll nachgezogen werden, genau wie bei MNQ.
     nt8_symbol: "NQ SEP26"
-    ibkr:
-      symbol: NQ
-      sec_type: FUT
-      exchange: CME
-      currency: USD
-      expiry: "202609"
-      multiplier: "20"
-      trading_class: NQ
     tick_size: 0.25
     tick_value: 5.00
     point_value: 20.00

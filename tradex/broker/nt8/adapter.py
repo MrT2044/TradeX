@@ -76,10 +76,18 @@ class NinjaTraderBroker:
         allow_orders: bool = False,
         tradeable_symbols: tuple[str, ...] = (),
         allowed_accounts: tuple[str, ...] = (),
+        contracts: dict[str, str] | None = None,
         connect_timeout_seconds: float = 10.0,
     ) -> None:
         self.host = host
         self.port = port
+        # NinjaTrader kennt Kontrakte ("MNQ SEP26"), TradeX rechnet mit dem
+        # Wurzelsymbol ("MNQ"). Dieselbe Uebersetzung wie im Feed, und aus
+        # demselben Grund: der Adapter ist der Adapter. Ohne sie geht die
+        # Order an den generischen `MNQ`-Eintrag, der keine Marktdaten hat -
+        # NinjaTrader nimmt sie an und lehnt sie zwanzig Sekunden spaeter ab.
+        self.contracts = {k.upper(): v for k, v in (contracts or {}).items() if v}
+        self._back = {v.upper(): k.upper() for k, v in self.contracts.items()}
         #: Gewuenschtes Konto. Leer heisst "das einzige Simulationskonto" - das
         #: AddOn lehnt ab, wenn es mehr als eines gibt, statt zu waehlen.
         self.wanted_account = account
@@ -246,7 +254,7 @@ class NinjaTraderBroker:
             self._register(request.order_key, "target", request, request.quantity, opposite=True)
 
         account = self._account.account if self._account is not None else self.wanted_account
-        self._send(protocol.submit_command(request, account))
+        self._send(protocol.submit_command(request, account, self.contracts.get(symbol, "")))
         log.info(
             "nt8_order_gesendet",
             symbol=symbol,
@@ -312,7 +320,11 @@ class NinjaTraderBroker:
             vorhanden = symbol in self._positions and self._positions[symbol].quantity != 0
         if not vorhanden:
             return None
-        self._send(protocol.flatten_command(self._account_name(), symbol))
+        # Auch hier der Kontrakt: `flatten` mit dem Wurzelsymbol traefe wieder
+        # den generischen Eintrag - und liesse die Position stehen.
+        self._send(
+            protocol.flatten_command(self._account_name(), self.contracts.get(symbol, symbol))
+        )
         return None
 
     def close_all_positions(self) -> list[BrokerOrder]:
@@ -410,7 +422,13 @@ class NinjaTraderBroker:
 
         if ereignis.kind == "position":
             payload = ereignis.payload
-            symbol = str(payload.get("symbol", ""))
+            # Zurueck auf das Wurzelsymbol. Ohne das fuehrte der Adapter eine
+            # Position unter "MNQ SEP26", waehrend `close_position("MNQ")`
+            # danach sucht und nichts findet - die Position bliebe offen, und
+            # das Aufraeumen meldete trotzdem Erfolg.
+            gemeldet = str(payload.get("symbol", ""))
+            symbol = self._back.get(gemeldet.upper(), gemeldet)
+            payload["symbol"] = symbol
             with self._state_lock:
                 self._positions[symbol] = BrokerPosition(
                     symbol=symbol,

@@ -27,6 +27,9 @@ der einzige Ausgang, den dieses Skript nicht hinterlassen darf.
 from __future__ import annotations
 
 import argparse
+import contextlib
+import json
+import socket
 import sys
 import time
 
@@ -68,6 +71,51 @@ def _argumente() -> argparse.Namespace:
         help="Ohne diesen Schalter wird nichts gesendet.",
     )
     return parser.parse_args()
+
+
+class _Marktdaten:
+    """Haelt waehrend des Tests ein Marktdaten-Abonnement offen.
+
+    NinjaTraders Simulationsmotor fuellt nur, solange fuer das Instrument
+    Echtzeitdaten anliegen; sonst lehnt er mit "There is no market data
+    available to drive the simulation engine" ab. Genau das ist beim ersten
+    Versuch passiert: der Orderweg baut nur die Broker-Verbindung auf, und die
+    abonniert bewusst keine Kursdaten.
+
+    Im Betrieb stellt sich die Frage nicht - dort laeuft der Feed und hat
+    laengst abonniert. Sie stellt sich nur fuer dieses eigenstaendige Skript,
+    und deshalb steht die Loesung hier und nicht im Adapter: eine
+    Orderanbindung, die nebenbei Kursdaten bestellt, waere eine Vermischung
+    zweier Wege, die dieses Projekt getrennt haelt.
+    """
+
+    def __init__(self, host: str, port: int, kontrakt: str, timeframe: str) -> None:
+        self._host, self._port = host, port
+        self._kontrakt, self._timeframe = kontrakt, timeframe
+        self._sock: socket.socket | None = None
+
+    def oeffnen(self) -> None:
+        try:
+            self._sock = socket.create_connection((self._host, self._port), timeout=5.0)
+            befehl = {
+                "type": "subscribe",
+                "symbol": self._kontrakt,
+                "timeframe": self._timeframe,
+            }
+            self._sock.sendall((json.dumps(befehl) + "\n").encode("utf-8"))
+            print(f"  Marktdaten        abonniert ({self._kontrakt})")
+        except OSError as fehler:
+            # Kein Abbruch: vielleicht laeuft TradeX daneben und hat bereits
+            # abonniert. Verschweigen waere aber falsch - ohne Daten lehnt der
+            # Simulationsmotor jede Order ab, und man suchte den Grund im
+            # Orderweg.
+            print(f"  Marktdaten        FEHLGESCHLAGEN ({fehler})")
+
+    def schliessen(self) -> None:
+        if self._sock is not None:
+            with contextlib.suppress(OSError):
+                self._sock.close()
+            self._sock = None
 
 
 def _ereignisse_zeigen(broker: NinjaTraderBroker, dauer: float) -> None:
@@ -161,6 +209,7 @@ def main() -> int:
         allow_orders=args.yes_send_paper_order,
         tradeable_symbols=(symbol,),
         allowed_accounts=config.broker.nt8.allowed_accounts,
+        contracts={symbol: instrumente[symbol].nt8_symbol},
         connect_timeout_seconds=config.broker.nt8.connect_timeout_seconds,
     )
 
@@ -172,6 +221,17 @@ def main() -> int:
         print(f"\n  FEHLGESCHLAGEN: {fehler}")
         print("  Laeuft NinjaTrader, und ist TradeXBridge.cs uebersetzt (F5)?")
         return 1
+
+    # Das Abonnement umschliesst ALLES, auch das Aufraeumen: das Glattstellen
+    # ist selbst eine Order und braucht dieselben Daten wie der Einstieg.
+    marktdaten = _Marktdaten(
+        config.broker.nt8.host,
+        config.broker.nt8.port,
+        instrumente[symbol].nt8_symbol,
+        config.data.base_timeframe.value,
+    )
+
+    marktdaten.oeffnen()
 
     gesendet = False
     try:
@@ -258,6 +318,9 @@ def main() -> int:
             except BrokerError as fehler:
                 print(f"  AUFRAEUMEN FEHLGESCHLAGEN: {fehler}")
                 print("  Positionen und Orders in NinjaTrader von Hand pruefen.")
+        # Erst nach dem Aufraeumen: das Glattstellen ist selbst eine Order und
+        # braucht dieselben Marktdaten wie der Einstieg.
+        marktdaten.schliessen()
         broker.disconnect()
         print()
         print("  Verbindung getrennt.")

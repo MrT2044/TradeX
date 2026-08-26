@@ -119,15 +119,15 @@ def test_ein_abgelehntes_konto_sperrt_die_stufe():
 
 
 # -------------------------------------------------------- Keine Portpruefung
-def test_fuer_ninjatrader_gibt_es_keine_portstufe():
+def test_es_gibt_keine_portstufe():
     """Der Bridge-Port trennt nicht zwischen Simulation und Echtgeld.
 
     Eine Portpruefung dort saehe aus wie ein Nachweis und waere keiner. Dieser
-    Test haelt fest, dass niemand aus Symmetrie eine einbaut.
+    Test haelt fest, dass niemand aus Symmetrie eine einbaut - auch nicht in
+    Erinnerung an die IBKR-Kette, die genau so eine Stufe hatte.
     """
     from tradex.broker import guard
 
     assert not hasattr(guard, "check_bridge_port")
-    assert R.BROKER_PORT_NOT_PAPER not in {
-        R.BROKER_ACCOUNT_NOT_SIMULATED,
-    }, "die beiden Codes duerfen nicht verwechselt werden"
+    assert not hasattr(guard, "check_port")
+    assert not any("port" in code for code in R.ALL_CODES if code.startswith("broker."))

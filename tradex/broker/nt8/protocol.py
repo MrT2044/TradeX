@@ -4,9 +4,8 @@ Warum getrennt vom Adapter
 --------------------------
 Hier steht kein Socket, kein Faden und keine Uhr. Jede Funktion ist eine
 Abbildung von Daten auf Daten und laesst sich ohne laufendes NinjaTrader
-pruefen - genau wie `ibkr/orders.py` ohne `ibapi` pruefbar ist. Was hier
-falsch ist, faellt in einem Test auf; was im Adapter falsch ist, faellt
-fruehestens an der Bridge auf.
+pruefen. Was hier falsch ist, faellt in einem Test auf; was im Adapter falsch
+ist, faellt fruehestens an der Bridge auf.
 
 Die Gegenstelle ist `bridge_nt8/TradeXBridge.cs`, die Spezifikation
 `bridge_nt8/README.md`. Beide Seiten muessen dasselbe Protokoll sprechen -
@@ -27,6 +26,7 @@ import json
 from typing import Any
 
 from tradex.broker.types import (
+    ROLE_ENTRY,
     BrokerEvent,
     OrderKind,
     OrderRequest,
@@ -105,17 +105,25 @@ def parse_state(raw: object) -> OrderState:
 
 
 # -------------------------------------------------------- Befehle hinaus
-def submit_command(request: OrderRequest, account: str) -> dict[str, Any]:
+def submit_command(request: OrderRequest, account: str, contract: str = "") -> dict[str, Any]:
     """`order_submit` aus einem `OrderRequest`.
 
     Stop und Ziel gehen als ECHTE Orders mit hinaus, nicht als Merkposten:
     sie muessen auch dann wirken, wenn TradeX nicht laeuft. Das AddOn haengt
     sie als OCO-Klammer an den Entry.
+
+    `contract` ist der NinjaTrader-Name ("MNQ SEP26"), `request.symbol` das
+    Wurzelsymbol ("MNQ"). Hinaus geht der KONTRAKT. Ohne diese Uebersetzung
+    loest das AddOn den generischen `MNQ`-Eintrag auf - und der hat keine
+    Marktdaten. NinjaTrader nahm die Order dann an und lehnte sie zwanzig
+    Sekunden spaeter ab: "There is no market data available to drive the
+    simulation engine". Der Feed uebersetzt seit jeher; der Orderweg tat es
+    nicht, und der Unterschied faellt erst am abgelehnten Auftrag auf.
     """
     return {
         "type": "order_submit",
         "order_key": request.order_key,
-        "symbol": request.symbol.upper(),
+        "symbol": (contract or request.symbol).upper(),
         "account": account,
         "side": request.side.value,
         "quantity": int(request.quantity),
@@ -188,7 +196,13 @@ def parse_event(message: dict[str, Any]) -> BrokerEvent | None:
     if kind == "order_update":
         return BrokerEvent(
             kind="order",
-            order_key=str(message.get("order_key", "")),
+            # Das AddOn sendet den nackten Schluessel und die Rolle GETRENNT
+            # (`KeyOfRef`/`RoleOfRef`). Nur den Schluessel zu lesen war ein
+            # Fehler mit stiller Wirkung: alle drei Orders einer Klammer
+            # tragen denselben, also landeten Stop- und Zielmeldungen auf der
+            # Entry-Order - und die Klammerteile blieben fuer immer
+            # `submitted`, obwohl sie laengst abgelehnt waren.
+            order_key=_ref_of(message),
             state=parse_state(message.get("state")),
             payload={
                 # Die Roh-ID der Bridge ist eine Zeichenkette. Sie wandert als
@@ -205,7 +219,10 @@ def parse_event(message: dict[str, Any]) -> BrokerEvent | None:
     if kind == "execution":
         return BrokerEvent(
             kind="fill",
-            order_key=str(message.get("order_key", "")),
+            # Auch hier die Rolle: eine Fuellung auf dem Stop schliesst eine
+            # Position, eine auf dem Entry oeffnet sie. Ohne den Unterschied
+            # ist eine Fuellung nicht auswertbar.
+            order_key=_ref_of(message),
             payload={
                 "exec_id": str(message.get("exec_id", "")),
                 "quantity": _as_int(message.get("quantity")),
@@ -271,6 +288,21 @@ def parse_event(message: dict[str, Any]) -> BrokerEvent | None:
             "known_code": code in REJECT_CODES,
         },
     )
+
+
+def _ref_of(message: dict[str, Any]) -> str:
+    """Schluessel und Rolle wieder zu einer `order_ref` zusammensetzen.
+
+    Das AddOn zerlegt sie beim Senden (`KeyOfRef`/`RoleOfRef`), weil der
+    Schluessel fuer alle drei Orders einer Klammer derselbe ist. Hier wird die
+    Zerlegung rueckgaengig gemacht - `order_ref()` ist dieselbe Funktion, die
+    die Kennung urspruenglich gebaut hat.
+
+    Fehlt `role`, gilt `entry`: eine Order ohne Rolle ist der Einstieg.
+    """
+    key = str(message.get("order_key", ""))
+    role = str(message.get("role", "") or ROLE_ENTRY)
+    return order_ref(key, role)
 
 
 def bracket_refs(order_key: str) -> tuple[str, str]:

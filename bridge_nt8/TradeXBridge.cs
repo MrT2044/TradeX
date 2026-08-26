@@ -1102,6 +1102,12 @@ namespace NinjaTrader.NinjaScript.AddOns
             if (execution == null || execution.Order == null) return;
             Broadcast("{\"type\":\"execution\""
                 + ",\"order_key\":\"" + Escape(KeyOfRef(execution.Order.Name)) + "\""
+                // Die Rolle MUSS mit, genau wie bei `order_update`. Eine
+                // Fuellung auf dem Stop schliesst eine Position, eine auf dem
+                // Entry oeffnet sie - ohne den Unterschied ist sie nicht
+                // auswertbar, und alle drei Orders einer Klammer tragen
+                // denselben `order_key`.
+                + ",\"role\":\"" + Escape(RoleOfRef(execution.Order.Name)) + "\""
                 + ",\"exec_id\":\"" + Escape(execution.ExecutionId) + "\""
                 + ",\"ts\":" + ToEpochNanos(execution.Time).ToString(CultureInfo.InvariantCulture)
                 + ",\"quantity\":" + execution.Quantity.ToString(CultureInfo.InvariantCulture)
@@ -1172,6 +1178,10 @@ namespace NinjaTrader.NinjaScript.AddOns
                 + ",\"name\":\"" + Escape(account.Name) + "\""
                 + ",\"provider\":\"" + Escape(account.Provider.ToString()) + "\""
                 + ",\"is_simulation\":true"
+                // `Denomination` ist die Waehrung des KONTOS. Sie fehlte
+                // bisher, obwohl die Spezifikation sie vorsah - der
+                // Kontostand stand deshalb ohne Waehrung da.
+                + ",\"currency\":\"" + Escape(account.Denomination.ToString()) + "\""
                 + ",\"net_liquidation\":" + AccountValue(account, AccountItem.NetLiquidation)
                 + ",\"buying_power\":" + AccountValue(account, AccountItem.BuyingPower)
                 + ",\"realized_pnl\":" + AccountValue(account, AccountItem.RealizedProfitLoss)

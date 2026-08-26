@@ -271,8 +271,6 @@ def build_broker(
         event_sink=event_sink,
         clock=time.time_ns,
     )
-    traded = {name: instruments[name] for name in request.symbols}
-
     if config.broker.provider == "nt8":
         from tradex.broker.nt8.adapter import NinjaTraderBroker
 
@@ -286,15 +284,18 @@ def build_broker(
             allow_orders=True,
             tradeable_symbols=request.symbols,
             allowed_accounts=config.broker.nt8.allowed_accounts,
+            # Dieselbe Zuordnung, die auch `build_feed` benutzt. Ohne sie
+            # ginge die Order an den generischen Eintrag ohne Marktdaten.
+            contracts={
+                name: instruments[name].nt8_symbol
+                for name in request.symbols
+                if instruments[name].nt8_symbol
+            },
             connect_timeout_seconds=config.broker.nt8.connect_timeout_seconds,
         )
-    elif config.broker.provider == "ibkr":
-        # Lazy: `ibapi` kommt aus einem Installer und nicht von PyPI. Der
-        # Import gehoert deshalb hinter die Entscheidung, ihn zu brauchen.
-        from tradex.broker.ibkr.adapter import IbkrAdapter
-
-        adapter = IbkrAdapter(config, traded, journal=journal, env=env)
-    else:  # pragma: no cover - `provider` ist per Config begrenzt
+    else:  # pragma: no cover - `provider` ist per Config auf "nt8" begrenzt
+        # Die Verzweigung bleibt, obwohl sie nur einen Zweig hat: hier haenge
+        # sich ein zweiter Adapter ein, und die Stelle soll sichtbar sein.
         raise LookupError(f"Unbekannter Broker {config.broker.provider!r}")
 
     store: BrokerOrderStore | None = None

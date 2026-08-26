@@ -1,4 +1,4 @@
-# ============================================================================
+﻿# ============================================================================
 #  TradeX - zentrale Konfiguration
 # ============================================================================
 #  ARCHITEKTUR-INVARIANTE 4 (Spec §29):
@@ -385,10 +385,11 @@ broker:          # Phase 9 - Orderanbindung an NinjaTrader (Simulationskonto)
   # durchsimuliert wie bisher, es fliesst nichts und es geht nichts hinaus.
   enabled: true
 
-  # nt8 seit Phase 9: Marktdaten und Ausfuehrung kommen aus demselben System,
-  # und der Paper-Nachweis ist direkt (Account.Provider == Provider.Simulator)
-  # statt indirekt (Port + DU-Praefix + Allowlist). `ibkr` bleibt waehlbar,
-  # bis der Ersatz nachweislich traegt.
+  # Seit Phase 9 der einzige Weg: Marktdaten und Ausfuehrung kommen aus
+  # demselben System, und der Paper-Nachweis ist direkt
+  # (Account.Provider == Provider.Simulator) statt indirekt. Die
+  # IBKR-Anbindung ist entfernt, nachdem dieser Weg am 26.08.2026 gegen ein
+  # laufendes NinjaTrader nachgewiesen war.
   provider: nt8
 
   # Wie alt die Bar hinter einem Signal sein darf, damit daraus noch eine Order
@@ -415,26 +416,6 @@ broker:          # Phase 9 - Orderanbindung an NinjaTrader (Simulationskonto)
     allowed_accounts: []
     connect_timeout_seconds: 10.0
 
-  ibkr:
-    host: "127.0.0.1"
-    paper_port: 4002            # IB Gateway Paper
-    live_port: 4001             # IB Gateway Live - wird NICHT verwendet
-    client_id: 10
-
-    # Der einzige harte Paper-Nachweis: die TWS-API kennt kein Feld "ist Paper".
-    # Nach dem ersten Lauf von scripts/test_ibkr_connection.py die dort
-    # ausgegebene Kontonummer hier eintragen.
-    allowed_accounts: ["DUR972761"]
-    paper_account_prefixes: ["DU", "DF"]
-
-    require_contract_details: true
-
-    # Stop und Ziel duerfen auch ausserhalb der Kernhandelszeit ausloesen.
-    # Aus waere bei Futures gefaehrlich: die Position laege ueber Nacht ohne
-    # wirksamen Stop im Markt.
-    outside_rth: true
-
-    connect_timeout_seconds: 15.0
 
 news:            # Spec §14/§15 - Sperrfenster um Wirtschaftstermine
   # Der Filter kann nur EINSTIEGE verhindern. Ausstiege bleiben immer moeglich:

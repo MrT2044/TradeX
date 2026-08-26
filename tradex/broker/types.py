@@ -1,6 +1,6 @@
 """Brokerunabhaengige Datentypen der Orderanbindung.
 
-Hier steht kein einziger IBKR-Begriff. Das ist der ganze Zweck: der Rest des
+Hier steht kein einziger NinjaTrader-Begriff. Das ist der ganze Zweck: der Rest des
 Programms spricht ausschliesslich diese Typen, und ein zweiter Broker waere
 ein zweiter Adapter - nicht ein zweiter Datenfluss.
 

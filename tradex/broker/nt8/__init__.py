@@ -1,8 +1,7 @@
 """Orderanbindung ueber die NinjaTrader-Bridge (Phase 9).
 
-Der einzige Ort, an dem das Bridge-Orderprotokoll gesprochen wird - so wie
-`tradex/broker/ibkr/` der einzige Ort mit `ibapi` ist. Der Rest des Programms
-kennt nur `BrokerInterface` aus `tradex/broker/base.py`.
+Der einzige Ort, an dem das Bridge-Orderprotokoll gesprochen wird. Der Rest
+des Programms kennt nur `BrokerInterface` aus `tradex/broker/base.py`.
 
 Warum NinjaTrader statt IBKR
 ----------------------------

@@ -186,6 +186,20 @@ def test_kein_schalter_hebelt_die_kontopruefung_aus(addon: str):
         )
 
 
+def test_jede_ordermeldung_traegt_ihre_rolle(addon: str):
+    """Alle drei Orders einer Klammer haben denselben `order_key`.
+
+    Ohne `role` liesse sich eine Stopmeldung nicht von einer Entry-Meldung
+    unterscheiden - und genau das ist am 26.08.2026 im Betrieb passiert: die
+    Klammerteile blieben in TradeX fuer immer `submitted`. Bei `execution`
+    fehlte das Feld zunaechst ganz.
+    """
+    for nachricht in ("order_update", "execution"):
+        block = addon[addon.index(f'\\"type\\":\\"{nachricht}\\"') :]
+        block = block[: block.index(";")]
+        assert 'RoleOfRef' in block, f"{nachricht} sendet keine Rolle mit"
+
+
 def test_order_ereignisse_werden_nie_zusammengefasst(addon: str):
     """Anders als Ticks. Ein verworfener Tick kostet einen Kursstand, eine
     verworfene Fuellung erzeugt eine Position, die TradeX nicht kennt.

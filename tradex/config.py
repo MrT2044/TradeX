@@ -20,7 +20,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from tradex.domain.enums import SessionName, Timeframe, TradingMode
 from tradex.domain.instruments import (
     DailyBreak,
-    IbkrContract,
     Instrument,
     SessionWindow,
     TradingHours,
@@ -426,55 +425,6 @@ class ExecutionConfig(_Frozen):
         return self
 
 
-class IbkrConfig(_Frozen):
-    """Verbindungsdaten fuer IB Gateway.
-
-    `paper_port` und `live_port` stehen beide hier, damit der Unterschied
-    sichtbar ist - der Adapter waehlt aber niemals `live_port`, solange nicht
-    `execution.mode` ein Live-Modus UND `execution.live_trading_enabled` gesetzt
-    ist. Der Port allein ist ohnehin kein Beweis fuer ein Paper-Konto; er ist
-    nur die erste von mehreren Pruefungen.
-    """
-
-    host: str = "127.0.0.1"
-    paper_port: int = Field(default=4002, ge=1, le=65535)
-    live_port: int = Field(default=4001, ge=1, le=65535)
-    client_id: int = Field(default=10, ge=0)
-
-    #: Kontonummern, die ausdruecklich erlaubt sind. Das ist der EINZIGE harte
-    #: Paper-Nachweis, den die TWS-API zulaesst - sie kennt kein Feld "ist
-    #: Paper". Leer bedeutet: das Praefix unten muss passen.
-    allowed_accounts: tuple[str, ...] = ()
-
-    #: Fallback, wenn `allowed_accounts` leer ist. "DU" ist IBKRs feste
-    #: Konvention fuer Einzel-Paper-Konten, "DF" fuer Advisor-Paper. Es gibt
-    #: dafuer keine dokumentierte API-Zusicherung, deshalb ist die Allowlist
-    #: die belastbarere Einstellung.
-    paper_account_prefixes: tuple[str, ...] = ("DU", "DF")
-
-    #: Jeden Kontrakt vor dem Handel ueber `reqContractDetails` aufloesen.
-    #: Ausschalten heisst raten - und ein falsch geratener Future ist ein
-    #: stiller Fehler, der erst in der Abrechnung auffaellt.
-    require_contract_details: bool = True
-
-    #: Duerfen Stop und Ziel ausserhalb der Kernhandelszeit ausloesen? Bei
-    #: Futures laeuft der Handel fast rund um die Uhr; ein Stop, der um 23 Uhr
-    #: nicht ausloest, ist kein Stop. Steht trotzdem hier und nicht als
-    #: Konstante im Adapter - wer es abschaltet, soll es sehen koennen.
-    outside_rth: bool = True
-
-    connect_timeout_seconds: float = Field(default=15.0, gt=0)
-
-    @model_validator(mode="after")
-    def _ports_differ(self) -> IbkrConfig:
-        if self.paper_port == self.live_port:
-            raise ValueError(
-                "broker.ibkr.paper_port und live_port duerfen nicht gleich sein - "
-                "sonst laesst sich Paper nicht von Live unterscheiden"
-            )
-        return self
-
-
 class LiveConfig(_Frozen):
     """Betriebsparameter des Livebetriebs - keine Handelsregeln.
 
@@ -505,8 +455,8 @@ class LiveConfig(_Frozen):
 class Nt8Config(_Frozen):
     """Orderanbindung ueber die NinjaTrader-Bridge (Phase 9).
 
-    Auffaellig kurz im Vergleich zu `IbkrConfig` - und das ist der Punkt. Dort
-    brauchte es Ports, Praefixe und eine Allowlist, weil die TWS-API kein Feld
+    Auffaellig kurz - und das ist der Punkt. Die abgeloeste IBKR-Anbindung
+    brauchte Ports, Praefixe und eine Allowlist, weil die TWS-API kein Feld
     "dies ist ein Paper-Konto" kennt und der Nachweis aus mehreren indirekten
     Hinweisen zusammengesetzt werden musste. Hier entscheidet
     `Account.Provider == Provider.Simulator`, eine Eigenschaft des Kontos, und
@@ -546,12 +496,18 @@ class BrokerConfig(_Frozen):
     """
 
     enabled: bool = False
-    provider: Literal["ibkr", "nt8"] = "nt8"
+    provider: Literal["nt8"] = "nt8"
     """Welche Anbindung Orders sendet.
 
-    `nt8` seit Phase 9: Marktdaten und Ausfuehrung kommen damit aus demselben
-    System, und der Paper-Nachweis ist direkt statt indirekt. `ibkr` bleibt
-    waehlbar, bis der Ersatz nachweislich traegt (A7 loescht ihn).
+    Seit Phase 9 nur noch NinjaTrader: Marktdaten und Ausfuehrung kommen aus
+    demselben System, und der Paper-Nachweis ist direkt
+    (`Account.Provider == Provider.Simulator`) statt indirekt. Die
+    IBKR-Anbindung ist entfernt, nachdem der Ersatz am 26.08.2026 gegen ein
+    laufendes NinjaTrader nachgewiesen war.
+
+    Das Feld bleibt als `Literal`, obwohl es nur einen Wert hat: eine zweite
+    Anbindung waere ein zweiter Adapter hinter demselben `BrokerInterface` -
+    und die Stelle, an der sie einzuhaengen waere, soll sichtbar bleiben.
     """
 
     #: Wie alt die Bar sein darf, aus der ein Signal stammt, damit daraus noch
@@ -570,7 +526,6 @@ class BrokerConfig(_Frozen):
     #: danach wiederholt.
     reconnect_delays_seconds: tuple[float, ...] = (1.0, 2.0, 5.0, 10.0, 30.0)
 
-    ibkr: IbkrConfig = IbkrConfig()
     nt8: Nt8Config = Nt8Config()
 
     @model_validator(mode="after")
@@ -734,28 +689,6 @@ def _parse_time(raw: str) -> time:
     return time(int(hours), int(minutes))
 
 
-def _build_ibkr_contract(spec: dict[str, Any], defaults: dict[str, Any]) -> IbkrContract | None:
-    """Den IBKR-Kontrakt aus dem Instrumenteintrag lesen.
-
-    Fehlt der Block, ist das Instrument bei IBKR nicht handelbar - das ist ein
-    gueltiger Zustand (Proxy- und Demodaten haben dort keinen Gegenpart) und
-    wird spaeter als Ablehnung gemeldet, nicht als Fehler beim Laden.
-    """
-    raw = spec.get("ibkr")
-    if not raw:
-        return None
-    return IbkrContract(
-        symbol=str(raw.get("symbol", "")),
-        sec_type=str(raw.get("sec_type", "FUT")),
-        exchange=str(raw.get("exchange", "")),
-        currency=str(raw.get("currency", defaults.get("currency", "USD"))),
-        expiry=str(raw.get("expiry", "")),
-        multiplier=str(raw.get("multiplier", "")),
-        local_symbol=str(raw.get("local_symbol", "")),
-        trading_class=str(raw.get("trading_class", "")),
-    )
-
-
 def _build_instrument(symbol: str, spec: dict[str, Any], defaults: dict[str, Any]) -> Instrument:
     # Handelszeiten und Sessions duerfen je Instrument ueberschrieben werden.
     # Noetig, weil nicht jedes Instrument den CME-Zeiten folgt: der
@@ -788,7 +721,6 @@ def _build_instrument(symbol: str, spec: dict[str, Any], defaults: dict[str, Any
         databento_continuous=spec["databento_continuous"],
         dukascopy_symbol=spec.get("dukascopy_symbol", ""),
         nt8_symbol=spec.get("nt8_symbol", ""),
-        ibkr=_build_ibkr_contract(spec, defaults),
         contract_months=tuple(defaults["contract_months"]),
         trading_hours=TradingHours(
             week_open=WeekBoundary(

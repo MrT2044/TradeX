@@ -232,6 +232,43 @@ def test_eine_order_geht_mit_klammer_hinaus(bridge: FakeBridge):
         broker.disconnect()
 
 
+def test_die_order_traegt_den_kontraktnamen(bridge: FakeBridge):
+    """Wie beim Feed: hinaus geht "MNQ SEP26", nicht "MNQ".
+
+    Ohne das loest NinjaTrader den generischen Eintrag auf, der keine
+    Marktdaten hat - die Order wird angenommen und zwanzig Sekunden spaeter
+    abgelehnt. Am 26.08.2026 im Betrieb genau so passiert.
+    """
+    broker = _broker(bridge, contracts={"MNQ": "MNQ SEP26"})
+    try:
+        broker.connect()
+        broker.place_market_order(_request())
+        assert bridge.warte_auf("order_submit")["symbol"] == "MNQ SEP26"
+    finally:
+        broker.disconnect()
+
+
+def test_positionen_kommen_unter_dem_wurzelsymbol_zurueck(bridge: FakeBridge):
+    """Die Gegenrichtung. Ohne sie fuehrte der Adapter die Position unter
+    "MNQ SEP26", waehrend `close_position("MNQ")` danach sucht - die Position
+    bliebe offen, und das Aufraeumen meldete trotzdem Erfolg."""
+    broker = _broker(bridge, contracts={"MNQ": "MNQ SEP26"})
+    try:
+        broker.connect()
+        bridge.send(
+            {"type": "position", "account": "Sim101", "symbol": "MNQ SEP26", "quantity": -2}
+        )
+        assert _warte(lambda: bool(broker.get_positions()))
+        assert broker.get_positions()[0].symbol == "MNQ"
+
+        broker.close_position("MNQ")
+        assert bridge.warte_auf("flatten")["symbol"] == "MNQ SEP26", (
+            "flatten muss ebenfalls den Kontrakt nennen"
+        )
+    finally:
+        broker.disconnect()
+
+
 def test_die_klammerteile_werden_mitgefuehrt(bridge: FakeBridge):
     """Ihre Zustandsmeldungen kommen unter `order_key#stop` herein. Ohne
     Eintrag waere das ein unbekannter Faden - und die Meldung ginge verloren."""

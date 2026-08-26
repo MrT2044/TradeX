@@ -6,7 +6,7 @@ Weil beides zusammen erst die Frage beantwortet, die nach einem Absturz
 gestellt wird: existiert diese Position, oder war sie nur geplant? Der Broker
 kennt seine Orders, aber nicht die Signale dahinter; das Programm kennt seine
 Signale, aber nach einem Neustart keine Order-IDs mehr. Die Bruecke ist
-`order_key` - er steht hier UND als `orderRef` bei IBKR.
+`order_key` - er steht hier UND als Order-Name in NinjaTrader.
 
 Schichtung: die Persistenzschicht weiss nichts ueber Broker (das Schema in
 `tradex/persistence/db.py` ist neutrales SQL), und dieses Modul ist der

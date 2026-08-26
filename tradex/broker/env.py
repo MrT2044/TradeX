@@ -35,10 +35,9 @@ KNOWN_VARIABLES: tuple[str, ...] = (
     "TRADING_MODE",
     "LIVE_TRADING_ENABLED",
     "TRADING_ENABLED",
-    "IBKR_HOST",
-    "IBKR_PAPER_PORT",
-    "IBKR_LIVE_PORT",
-    "IBKR_CLIENT_ID",
+    "NT8_HOST",
+    "NT8_PORT",
+    "NT8_ACCOUNT",
 )
 
 _TRUE = {"1", "true", "yes", "on", "ja"}
@@ -158,15 +157,17 @@ _PAPER_MODES = frozenset({TradingMode.PAPER_MANUAL, TradingMode.PAPER_AUTO})
 def _check_connection(values: dict[str, str], broker: BrokerConfig) -> list[str]:
     """Verbindungsdaten duerfen bestaetigen, aber nicht umlenken.
 
-    Ein abweichender Port in `.env` waere die gefaehrlichste Form der
-    Freischaltung: er koennte auf 4001 zeigen, ohne dass irgendein Schalter
-    "live" heisst.
+    Zur IBKR-Zeit war das die gefaehrlichste denkbare Freischaltung: ein Port
+    in `.env` konnte auf 4001 zeigen, ohne dass irgendein Schalter "live"
+    hiess. Bei NinjaTrader gibt es diesen Weg nicht mehr - ueber die Kontoart
+    entscheidet das AddOn, nicht die Adresse. Die Pruefung bleibt trotzdem:
+    eine `.env`, die stillschweigend auf eine andere Bridge zeigt, waere immer
+    noch eine Anbindung, die niemand konfiguriert hat.
     """
     expected: tuple[tuple[str, str], ...] = (
-        ("IBKR_HOST", broker.ibkr.host),
-        ("IBKR_PAPER_PORT", str(broker.ibkr.paper_port)),
-        ("IBKR_LIVE_PORT", str(broker.ibkr.live_port)),
-        ("IBKR_CLIENT_ID", str(broker.ibkr.client_id)),
+        ("NT8_HOST", broker.nt8.host),
+        ("NT8_PORT", str(broker.nt8.port)),
+        ("NT8_ACCOUNT", broker.nt8.account),
     )
     conflicts: list[str] = []
     for key, configured in expected:

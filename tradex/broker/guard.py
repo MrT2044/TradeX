@@ -1,4 +1,4 @@
-"""Die Sicherheitskette vor jeder Order (Spec Paragraph 24).
+﻿"""Die Sicherheitskette vor jeder Order (Spec Paragraph 24).
 
 Fail closed
 -----------
@@ -11,27 +11,27 @@ Reine Funktionen ohne I/O
 -------------------------
 Dieses Modul fragt nichts ab und verbindet sich mit nichts. Es bekommt den
 Zustand hereingereicht und faellt ein Urteil. Deshalb laesst sich die ganze
-Kette in Tests durchspielen, ohne dass ein IB Gateway laeuft - und das ist die
+Kette in Tests durchspielen, ohne dass NinjaTrader laeuft - und das ist die
 einzige Art, wie sie ueberhaupt geprueft werden kann.
 
-Zwei Anbindungen, zwei Nachweise
---------------------------------
-Die Stufen 1-4 (`check_configuration`) gelten fuer beide: Modus, Freigabe,
-`.env`. Ab Stufe 5 unterscheiden sie sich, weil die Anbindungen verschieden
-starke Auskuenfte geben.
+Der Paper-Nachweis
+------------------
+Stufen 1-4 (`check_configuration`) pruefen die Konfiguration: Modus, Freigabe,
+`.env`. Stufe 7 (`confirm_simulated_account`) prueft das Konto.
 
-**IBKR** (`check_port`, `confirm_paper_account`): `port == 4002` sagt nur,
-wohin verbunden wurde - ein Gateway laesst sich auf jedem Port betreiben, und
-die TWS-API kennt kein Feld "dies ist ein Paper-Konto". Der belastbarste
-verfuegbare Nachweis ist die Kontonummer gegen eine hinterlegte Liste;
-ersatzweise das Praefix `DU`/`DF` - eine Konvention, keine zugesicherte
-Eigenschaft. Deshalb steht dort beides und nicht eines allein.
+`Account.Provider == Provider.Simulator` ist eine Eigenschaft des KONTOS,
+gefaellt im AddOn - also auf der Seite, die dieses Programm nicht
+kontrolliert. Die Pruefung hier ist die zweite Haelfte davon: eine
+Sicherheitskette, die nur dort laeuft, wo man selbst schreibt, beschreibt die
+Grenze, statt sie zu pruefen.
 
-**NinjaTrader** (`confirm_simulated_account`): `Account.Provider ==
-Provider.Simulator` ist eine Eigenschaft des KONTOS. Der Nachweis ist damit
-direkt statt indirekt - das ist der eigentliche Gewinn der Migration. Er wird
-im AddOn gefaellt, also auf der Seite, die dieses Programm nicht kontrolliert;
-die Pruefung hier ist die zweite Haelfte davon.
+Die abgeloeste IBKR-Anbindung brauchte dafuer drei Stufen (Paper-Port,
+`DU`-Praefix, Allowlist), weil die TWS-API kein Feld "dies ist ein
+Paper-Konto" kennt und der Nachweis aus indirekten Hinweisen zusammengesetzt
+werden musste. Ein Gegenstueck zur Portpruefung gibt es hier bewusst NICHT:
+der Bridge-Port trennt nicht zwischen Simulation und Echtgeld, er ist nur die
+Adresse des AddOns. Eine Stufe, die aussieht wie ein Nachweis und keiner ist,
+waere schlechter als keine.
 """
 
 from __future__ import annotations
@@ -123,29 +123,13 @@ def check_configuration(
     return GateResult(approved=True, reasons=tuple(reasons))
 
 
-def check_port(broker: BrokerConfig, port: int) -> Reason:
-    """Stufe 5 fuer IBKR: verbunden wird ausschliesslich auf den Paper-Port.
-
-    Fuer NinjaTrader gibt es dazu bewusst KEIN Gegenstueck. Der Bridge-Port
-    trennt nicht zwischen Simulation und Echtgeld - er ist nur die Adresse des
-    AddOns. Eine Portpruefung dort waere eine Stufe, die aussieht wie ein
-    Nachweis und keiner ist; die Kontosperre traegt das allein.
-    """
-    ok = port == broker.ibkr.paper_port
-    return Reason(
-        R.BROKER_PORT_NOT_PAPER,
-        ok,
-        {"port": port, "erwartet": broker.ibkr.paper_port},
-    )
-
-
 def confirm_simulated_account(
     account: str,
     is_simulation: bool,
     provider: str = "",
     allowed_accounts: tuple[str, ...] = (),
 ) -> AccountInfo:
-    """Stufe 7 fuer NinjaTrader - und der Grund, warum die Migration sich lohnt.
+    """Stufe 7 - und der Grund, warum die Migration sich gelohnt hat.
 
     Bei IBKR blieb der Paper-Nachweis strukturell indirekt: Port, `DU`-Praefix
     und Allowlist zusammen, weil die TWS-API kein Feld "dies ist ein
@@ -219,79 +203,3 @@ def check_simulated_account(account: AccountInfo | None) -> Reason:
         {"account": account.account, "nachweis": account.paper_evidence},
     )
 
-
-def confirm_paper_account(
-    broker: BrokerConfig,
-    accounts: tuple[str, ...],
-    account_type: str = "",
-) -> AccountInfo:
-    """Stufe 7: ist das verbundene Konto nachweislich ein Paper-Konto?
-
-    Liefert immer ein `AccountInfo`; `is_paper` sagt, ob gehandelt werden darf,
-    und `paper_evidence` nennt den Grund. Ein Flag ohne Begruendung waere im
-    Nachhinein nicht ueberpruefbar.
-
-    Mehrere Konten fuehren zur Ablehnung. Es waere technisch loesbar, sich eins
-    auszusuchen - aber "welches Konto hat der Bot eigentlich gehandelt?" ist
-    keine Frage, die man aus Bequemlichkeit offen laesst.
-    """
-    if not accounts:
-        return AccountInfo(
-            account="",
-            account_type=account_type,
-            is_paper=False,
-            paper_evidence="kein Konto gemeldet",
-        )
-    if len(accounts) > 1:
-        return AccountInfo(
-            account=",".join(accounts),
-            account_type=account_type,
-            is_paper=False,
-            paper_evidence=f"{len(accounts)} Konten gemeldet - nicht eindeutig",
-        )
-
-    account = accounts[0].strip()
-    allowed = tuple(entry.strip().upper() for entry in broker.ibkr.allowed_accounts if entry.strip())
-    if allowed:
-        # Die Allowlist ist der einzige harte Nachweis. Ist sie gesetzt,
-        # entscheidet ausschliesslich sie - ein Praefix duerfte sie nicht
-        # aushebeln, sonst waere sie wirkungslos.
-        if account.upper() in allowed:
-            return AccountInfo(
-                account=account,
-                account_type=account_type,
-                is_paper=True,
-                paper_evidence="allowlist",
-            )
-        return AccountInfo(
-            account=account,
-            account_type=account_type,
-            is_paper=False,
-            paper_evidence="nicht in broker.ibkr.allowed_accounts",
-        )
-
-    prefixes = tuple(p.strip().upper() for p in broker.ibkr.paper_account_prefixes if p.strip())
-    if prefixes and account.upper().startswith(prefixes):
-        return AccountInfo(
-            account=account,
-            account_type=account_type,
-            is_paper=True,
-            paper_evidence=f"praefix ({'/'.join(prefixes)}) - Konvention, keine API-Zusicherung",
-        )
-    return AccountInfo(
-        account=account,
-        account_type=account_type,
-        is_paper=False,
-        paper_evidence=f"Praefix passt zu keinem von {'/'.join(prefixes) or '(keine)'}",
-    )
-
-
-def check_account(account: AccountInfo | None) -> Reason:
-    """Stufe 7 als Reason - fuer die Kette vor jeder einzelnen Order."""
-    if account is None:
-        return Reason(R.BROKER_ACCOUNT_UNCONFIRMED, False, {"account": None})
-    return Reason(
-        R.BROKER_ACCOUNT_UNCONFIRMED,
-        account.is_paper,
-        {"account": account.account, "nachweis": account.paper_evidence},
-    )

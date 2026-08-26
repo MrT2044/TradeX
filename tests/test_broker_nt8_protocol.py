@@ -111,7 +111,25 @@ def test_der_gewuenschte_einstiegskurs_geht_nicht_hinaus():
     assert "strategy" not in befehl
 
 
-def test_das_symbol_geht_in_grossbuchstaben_hinaus():
+def test_hinaus_geht_der_kontrakt_nicht_das_wurzelsymbol():
+    """Der Fehler, an dem A8 zweimal gescheitert ist.
+
+    NinjaTrader kennt "MNQ SEP26", TradeX rechnet mit "MNQ". Ohne die
+    Uebersetzung loest das AddOn den GENERISCHEN `MNQ`-Eintrag auf - und der
+    hat keine Marktdaten. NinjaTrader nahm die Order an und lehnte sie zwanzig
+    Sekunden spaeter ab ("There is no market data available to drive the
+    simulation engine"), im Log stand `Instrument='MNQ'`.
+
+    Der Feed uebersetzt seit jeher. Dass der Orderweg es nicht tat, faellt
+    nirgends auf ausser am abgelehnten Auftrag.
+    """
+    befehl = protocol.submit_command(_request(symbol="MNQ"), "Sim101", contract="MNQ SEP26")
+    assert befehl["symbol"] == "MNQ SEP26"
+
+
+def test_ohne_kontrakt_bleibt_das_symbol_stehen():
+    """Fuer Instrumente ohne Kontraktnamen (Aktien, Devisen) gibt es nichts zu
+    uebersetzen - dann ist das Symbol selbst richtig."""
     befehl = protocol.submit_command(_request(symbol="mnq"), account="Sim101")
     assert befehl["symbol"] == "MNQ"
 
@@ -184,6 +202,49 @@ def test_order_update_wird_vollstaendig_gelesen():
     # Uebersetzung auf int braucht Zustand und gehoert in den Adapter.
     assert ereignis.payload["broker_order_id"] == "a91f-0042"
     assert ereignis.order_id == 0
+
+
+def test_die_rolle_wird_wieder_an_den_schluessel_gehaengt():
+    """Der Fehler, der im Betrieb am 26.08.2026 sichtbar wurde.
+
+    Alle drei Orders einer Klammer tragen denselben `order_key`; das AddOn
+    schickt die Rolle in einem EIGENEN Feld (`KeyOfRef`/`RoleOfRef`). Wurde
+    nur der Schluessel gelesen, landeten Stop- und Zielmeldungen auf der
+    Entry-Order - und die Klammerteile blieben fuer immer `submitted`, obwohl
+    sie laengst abgelehnt waren. Im Skript standen deshalb zwei offene Orders,
+    die es beim Broker nicht mehr gab.
+    """
+    for rolle, erwartet in (("entry", "S17-4"), ("stop", "S17-4#stop"), ("target", "S17-4#target")):
+        ereignis = protocol.parse_event(
+            {"type": "order_update", "order_key": "S17-4", "role": rolle, "state": "rejected"}
+        )
+        assert ereignis is not None
+        assert ereignis.order_key == erwartet, f"Rolle {rolle} falsch zugeordnet"
+
+
+def test_auch_fuellungen_tragen_ihre_rolle():
+    """Eine Fuellung auf dem Stop schliesst eine Position, eine auf dem Entry
+    oeffnet sie. Ohne den Unterschied ist sie nicht auswertbar."""
+    ereignis = protocol.parse_event(
+        {
+            "type": "execution",
+            "order_key": "S17-4",
+            "role": "stop",
+            "quantity": 1,
+            "price": 29100.0,
+        }
+    )
+    assert ereignis is not None
+    assert ereignis.order_key == "S17-4#stop"
+
+
+def test_ohne_rolle_gilt_entry():
+    """Faellt das Feld weg, ist es der Einstieg - nicht ein unbekannter Faden."""
+    ereignis = protocol.parse_event(
+        {"type": "order_update", "order_key": "S17-4", "state": "accepted"}
+    )
+    assert ereignis is not None
+    assert ereignis.order_key == "S17-4"
 
 
 def test_eine_fuellung_wird_nie_zusammengefasst():

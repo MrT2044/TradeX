@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from tradex.analysis import reasons as R
 from tradex.broker import journal as J
 from tradex.broker.base import BrokerError, BrokerInterface, BrokerNotConnected
-from tradex.broker.guard import check_account
+from tradex.broker.guard import check_simulated_account
 from tradex.broker.journal import TradeJournal
 from tradex.broker.store import BrokerOrderStore
 from tradex.broker.types import (
@@ -162,7 +162,7 @@ class OrderManager:
         if not self.broker.is_connected():
             return Reason(R.BROKER_NOT_CONNECTED, False, {"grund": "keine Verbindung"})
 
-        account_reason = check_account(self.account)
+        account_reason = check_simulated_account(self.account)
         if not account_reason.ok:
             return account_reason
 

@@ -1,4 +1,4 @@
-# CLAUDE.md
+﻿# CLAUDE.md
 
 Arbeitshinweise für dieses Repository. Was das Projekt *ist*, steht im
 [README](README.md) — hier steht, was beim *Arbeiten daran* zu beachten ist.
@@ -12,18 +12,23 @@ Arbeitshinweise für dieses Repository. Was das Projekt *ist*, steht im
 
 **Phasen 1–7 fertig** (Registry, Multi-Instrument, Musterstatistik,
 News-Filter/Termine, Papertrading, NinjaTrader-Bridge, Dashboard/Kill Switch).
-**Phase 8 fertig: IBKR-Paper-Anbindung** — Adapter ist gegen ein **laufendes
-IB Gateway** gelaufen (24.08.2026): Konto `DUR972761`, Paper über Allowlist
-belegt, MNQ/NQ eindeutig aufgelöst (`MNQU6`/`NQU6`, 20260918). Config steht
-auf `execution.mode: paper_auto` + `broker.enabled: true`;
-`live_trading_enabled` bleibt aus. Siehe unten und NEXT STEPS.
+**Phase 9 fertig: Orderweg über NinjaTrader.** Marktdaten und Ausführung
+kommen aus demselben System. Ende-zu-Ende gegen NT 8.1.8.2 / `Sim101` belegt
+(26.08.2026): Entry gefüllt, Stop und Ziel als echte OCO-Orders,
+Glattstellen, Konto glatt. Config steht auf `execution.mode: paper_auto` +
+`broker.enabled: true` + `broker.provider: nt8`; `live_trading_enabled`
+bleibt aus.
+
+**Die IBKR-Anbindung ist entfernt** (A7), nachdem der Ersatz nachweislich
+trug. Sie liegt in der Historie bis `d5646b5`; wer sie je zurückholt, holt
+auch `ibapi` und die dreistufige Paper-Ersatzprüfung zurück.
 
 **Es gibt bis heute keinen nachgewiesenen Edge** — jedes Vertrauensband über
 alle Backtest-Läufe schließt null ein (belastbarster Lauf: MNQ+MES
 2023–2026, 685 Trades, −0,028 R, Band −0,14…+0,09; Zahlen via
 `config/backtest_edge.yaml`, 25.000er Konto). Das bestimmt die Reihenfolge:
-**Papertrading und IBKR-Paper kosten nichts außer Zeit**, echtes Geld wartet
-auf Phase 9 — `execution.live_trading_enabled` bleibt aus.
+**Papertrading kostet nichts außer Zeit**, echtes Geld wartet auf einen
+nachgewiesenen Edge — `execution.live_trading_enabled` bleibt aus.
 
 ---
 
@@ -39,10 +44,9 @@ Shell-Textmanipulation.
 cd ui ; npm run typecheck
 ```
 
-**`ibapi` ist installiert** — 9.81.1.post1 von PyPI. Das ist eine **Fremdkopie**
-von IBKRs Quelltext (Upload durch `freemo`, Stand 2020), nicht IBKRs eigene
-Veröffentlichung; die aktuelle 10.x gibt es nur über den TWS-API-Installer.
-9.81 genügt: der Adapter erkennt die Signaturunterschiede zur Laufzeit.
+**Keine optionalen Abhängigkeiten mehr.** `ibapi` wird seit Phase 9 nicht
+gebraucht; der Orderweg spricht zeilenweises JSON über einen Socket. Wer das
+Paket noch installiert hat, kann es entfernen.
 
 Vor jedem Commit: **ruff sauber + Tests grün + `npm run typecheck`**.
 
@@ -114,7 +118,7 @@ Pflichtglieder filtern je ~89 %, macht 1,3 % der Sweeps.
 
 ---
 
-## Live-Betrieb (Phasen 5–8)
+## Live-Betrieb (Phasen 5–9)
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\run_paper.py --symbol MNQ_PROXY --speed 3600
@@ -131,13 +135,30 @@ gleichzeitig (gemeinsames Risikobuch). Betriebsereignisse gehen in
 
 **Feeds:** `replay` (fertig) und `nt8` (läuft — AddOn in NT 8.1.8.2, Bridge
 auf Port 39473, `nt8_symbol` in `instruments.yaml` beim Roll nachziehen).
-NinjaTrader ist **reine Datenquelle** — kein Order-Kanal.
+Seit Phase 9 ist NinjaTrader **auch der Order-Kanal** — die frühere Zusage
+„reine Datenquelle" gilt nicht mehr.
 
 ### Phase 9: Orderweg über NinjaTrader
 
 **Die Weiche steht auf `broker.provider: nt8`.** Marktdaten und Ausführung
-kommen damit aus demselben System. `ibkr` bleibt wählbar, bis der Ersatz
-nachweislich trägt.
+kommen damit aus demselben System.
+
+**Ende-zu-Ende belegt (26.08.2026, NT 8.1.8.2, Sim101):** Entry filled
+@ 29162.00, Stop und Ziel als echte OCO-Orders, Glattstellen filled
+@ 29162.75, Konto glatt. Details und die drei Fehler, die davorstanden, im
+[bridge_nt8/README](bridge_nt8/README.md).
+
+**Zwei Dinge, die dabei gelernt wurden und leicht wieder passieren:**
+Der Orderweg muss das Wurzelsymbol genauso auf `nt8_symbol` übersetzen wie
+der Feed — sonst trifft er den generischen Eintrag ohne Marktdaten, und
+NinjaTrader lehnt erst nach zwanzig Sekunden ab. Und alle drei Orders einer
+Klammer tragen denselben `order_key`; die **Rolle** kommt in einem eigenen
+Feld und muss gelesen werden, sonst landen Stop- und Zielmeldungen auf der
+Entry-Order.
+
+**Sim101 rechnet ohne Gebühren**, solange kein Commission-Template gesetzt
+ist. Papertrades sind damit optimistischer als der Backtest, dessen
+Ausführungsannahmen bewusst pessimistisch sind — beim Vergleich beachten.
 
 Der Preis: Orders und Kursdaten teilen sich einen Socket — die alte Zusage
 „keine Orders über diesen Weg" ist damit aufgegeben. Abgesichert wird das
@@ -174,65 +195,41 @@ lebend, die es vielleicht nicht mehr gibt.
 lautlos nicht handelbar — das AddOn lehnt erst beim Senden mit
 `instrument_unknown` ab. Beim Roll für MNQ **und NQ** nachziehen.
 
-### Phase 8: IBKR-Paper-Anbindung — Architektur (wird in A7 entfernt)
+### Phase 9: Orderweg über NinjaTrader — Architektur
 
-Ziel: Marktdaten weiter von NinjaTrader, Ausführung über IB Gateway auf ein
-Paper-Konto, Strategie/Analyse unangetastet. **Vollständiger Plan:**
-`C:\Users\nikla\.claude\plans\ich-m-chte-in-meinem-squishy-mist.md`.
-
-**Kernentscheidung:** `SymbolBook` bekommt eine austauschbare Füllquelle über
-das `TradeExecutor`-Protokoll (`backtest/execution.py`): `SimulatedExecutor`
-(Default, unverändert — alte `OpenTrade`-Logik zog dorthin um) oder
-`BrokerExecutor` (`broker/executor.py`, IBKR-Fills führend). Ohne
+**Kernentscheidung (aus Phase 8 übernommen):** `SymbolBook` hat eine
+austauschbare Füllquelle über das `TradeExecutor`-Protokoll
+(`backtest/execution.py`): `SimulatedExecutor` (Default, unverändert) oder
+`BrokerExecutor` (`broker/executor.py`, echte Fills führend). Ohne
 `executor`-Arg ist `SymbolBook` byte-identisch zu vorher. Preis: mit Broker
-gilt „Papertrading = Backtest" nur für die Entscheidungen, nicht die Fills —
-beabsichtigt, im Plan begründet.
+gilt „Papertrading = Backtest" nur für die **Entscheidungen**, nicht die
+Fills — beabsichtigt.
 
-**`tradex/broker/` (fertig):** `types.py` (DTOs) · `base.py`
-(`BrokerInterface`-Protocol, keine IBKR-Begriffe) · `env.py` (`.env` kann NUR
-sperren, nie freischalten) · `guard.py` (Sicherheitskette, reine Funktionen)
-· `journal.py` (`TradeJournal`) · `store.py` (`broker_orders`, **Migration
-4**) · `manager.py` (`OrderManager`, Duplikatschutz, Ratenlimit) ·
-`executor.py` (`BrokerExecutor`, baut `SimulatedTrade` aus echten Fills).
-
-**Config:** `LiveConfig` (Section `live:`, Betriebsparameter ohne Backtest-
-Entsprechung — `nt8_history_days`/`_timeout_seconds`) ·
-`BrokerConfig`/`IbkrConfig` in `config.py`, Section `broker:` in
-`default.yaml` (Default `enabled: false`). `IbkrContract` in
-`domain/instruments.py`, `ibkr:`-Block bei MNQ/NQ in `instruments.yaml`
-(`expiry` beim Roll nachziehen, wie `nt8_symbol`).
+**`tradex/broker/`:** `types.py` (DTOs, kein NinjaTrader-Begriff) · `base.py`
+(`BrokerInterface`-Protocol) · `env.py` (`.env` kann NUR sperren, nie
+freischalten) · `guard.py` (Sicherheitskette, reine Funktionen) · `journal.py`
+· `store.py` (`broker_orders`, Migration 4) · `manager.py` (`OrderManager`,
+Duplikatschutz, Ratenlimit) · `executor.py` · **`nt8/`** = `protocol.py`
+(rein, ohne NinjaTrader prüfbar) + `adapter.py` (`NinjaTraderBroker`).
 
 **Sicherheitskette (fail closed):** paper-Mode UND live_trading_enabled=false
-UND broker.enabled UND `.env` sperrt nicht UND Paper-Port UND Verbindung UND
-Paper-Konto bestätigt UND Kontrakt eindeutig UND RiskEngine UND Datenalter
-UND Rate-Limit UND `order_key` unbekannt — jede Stufe eigener Reason-Code.
+UND broker.enabled UND `.env` sperrt nicht UND Verbindung UND
+`Account.Provider == Provider.Simulator` UND RiskEngine UND Datenalter UND
+Rate-Limit UND `order_key` unbekannt — jede Stufe ein eigener Reason-Code.
+Ein Gegenstück zur alten IBKR-Portstufe gibt es **bewusst nicht**: der
+Bridge-Port trennt nicht zwischen Simulation und Echtgeld.
 
-**`tradex/broker/ibkr/` (fertig, gegen `ibapi` UND gegen ein laufendes
-Gateway geprüft):** `contracts.py` (Auflösung via
-`reqContractDetails`, 0/>1 Treffer sperren) · `orders.py` (Bracket,
-`OrderIdAllocator`, Status-/Fehlercode-Abbildung — ohne `ibapi` prüfbar) ·
-`adapter.py` (Reader-Thread → Queue → `drain_events()`, einziger
-`ibapi`-Import; ein Test hält die Grenze fest).
+**Ohne Orderrecht (`allow_orders=False`) darf verbunden werden** — es gibt
+dann keinen Sendeweg, den die Kette schützen könnte. Sonst müsste man den
+Handel scharfschalten, nur um die Verbindung zu testen.
 
-**Einhängung (fertig):** `SessionConfig.executor_factory` + `broker_health` +
-`pump_broker()` in `live/session.py`, Aufruf in der Runner-Schleife (ein Stop
-löst aus wenn er auslöst, nicht zum Bar-Schluss), `BrokerLink` +
-`build_broker()` in `live/manager.py`. **Beide** Wege bauen den Broker —
-`SessionManager.start()` und `scripts/run_paper.py`. Neuer Haltegrund
-`broker_disconnected`.
-
-**Ohne Orderrecht (`allow_orders=False`) darf verbunden werden**, auch wenn
-die Sicherheitskette sperrt: es gibt dann keinen Sendeweg, den sie schützen
-könnte. Sonst müsste man den Handel scharfschalten, nur um die Verbindung zu
-testen. Mit Orderrecht sperrt sie unverändert — beides per Test belegt.
-
-**Zwei Handskripte, beide in `scripts/`** (nicht im Wurzelverzeichnis: ein
-blankes `pytest` sammelt `test_*.py` dort ein und würde bei jedem Testlauf das
-Gateway anfassen). `test_ibkr_connection.py` prüft nur die Verbindung —
-`allow_orders=False`, es gibt keinen Sendeweg. `test_paper_order.py` sendet
-**tatsächlich** eine Order: zwei Bestätigungen (`--yes-send-paper-order` plus
-Eingabe `JA`), kein Schalter an der Sicherheitskette vorbei, Konto muss in
-`allowed_accounts` stehen, und ein `finally`-Block storniert und stellt glatt
+**Zwei Handskripte in `scripts/`** (nicht im Wurzelverzeichnis: ein blankes
+`pytest` sammelt `test_*.py` dort ein). `nt8_tick_probe.py` misst nur, was
+über die Bridge kommt. `nt8_paper_order.py` sendet **tatsächlich** eine Order:
+zwei Bestätigungen (`--yes-send-paper-order` plus Eingabe `JA`), kein Schalter
+an der Sicherheitskette vorbei, und ein `finally`-Block storniert und stellt
+glatt — auch bei Strg+C. Ohne Bestätigung ist es der Verbindungs- und
+Kontotest.
 — auch bei Strg+C.
 
 ---
@@ -356,7 +353,7 @@ nur 100.000 je Anfrage — `client.ts` teilt selbst auf.
 **Testkonventionen:** Handgebaute Fixtures statt Zufallsdaten. **Kein Test
 fasst je ein echtes Gateway an** — Fixtures, die `default.yaml` laden, müssen
 `raw["broker"]["enabled"] = False` setzen. Seit dem Scharfschalten baute sonst
-jede Testsitzung einen echten IBKR-Adapter, hing in 15-s-Timeouts und war grün
+jede Testsitzung einen echten Broker-Adapter, hing in Timeouts und war grün
 oder rot, je nachdem ob auf dieser Maschine gerade ein Gateway lief. Die
 Orderanbindung testet der `FakeBroker` (`tests/fake_broker.py`). Wächter-Tests
 gegen leere Wahrheit. **Nie gegen den Auslieferungszustand der Konfiguration
@@ -374,7 +371,7 @@ offen, bis der Server schliesst, und der schliesst nie.
 ## Daten
 
 `MNQ_PROXY`/`MES_PROXY` (Nasdaq/S&P-CFD via Dukascopy, 1m ab 2011, kostenlos),
-`MNQ_DEMO` (synthetisch), `MNQ`/`NQ` (echte Futures via Databento/NT/IBKR).
+`MNQ_DEMO` (synthetisch), `MNQ`/`NQ` (echte Futures via Databento/NinjaTrader).
 
 **Für `MNQ` liegt lokal nichts** — die Bars kommen live von NinjaTrader. Ist
 NT zu, zeigt die Oberfläche beim `default_symbol: MNQ` deshalb leere Charts.
@@ -402,15 +399,17 @@ Konfigurationswerte still korrigieren (`consistency.py` meldet nur). Parameter
 optimieren (Rauschen bei n≈150). Ausführungsannahmen aufweichen (`backtest:`
 absichtlich pessimistisch). Musterspuren suchen (nur feste Liste in
 `patterns.py`, Mehrfachtest-Korrektur). **Live-Trading freischalten** —
-`live_trading_enabled` aus, braucht Phase 9; der IBKR-Adapter verweigert
-`live_port` strukturell.
+`live_trading_enabled` bleibt aus, und `check_configuration` verweigert jeden
+Live-Modus strukturell (`BROKER_LIVE_BLOCKED`). Orders gehen ausschließlich
+auf Konten mit `Account.Provider == Provider.Simulator`, entschieden im AddOn;
+einen Schalter daran vorbei gibt es nicht.
 
 ---
 
 ## Aufbau
 
 ```
-tradex/domain/    Bars, Instrumente (inkl. IbkrContract), Enums — keine I/O
+tradex/domain/    Bars, Instrumente, Enums — keine I/O
 tradex/data/      Provider, Parquet-Store, Sessions, Aggregation, Integrität
 tradex/analysis/  MarketContext = der einzige Analysepfad; reasons.py
 tradex/strategy/  base/chain/opening_range/portfolio/registry
@@ -420,8 +419,8 @@ tradex/backtest/  execution (TradeExecutor+SimulatedExecutor), runner (SymbolBoo
                   Backtester), metrics/significance/patterns/report/store
 tradex/live/      feed/replay_feed/nt8_feed/session/runner/store/manager (Kill Switch),
                   watch.py (Beobachtung ohne Handel), nt8_history.py (Historienabruf)
-tradex/broker/    Phase 8, siehe oben; ibkr/ = contracts/orders/adapter,
-                  einziger Ort mit ibapi
+tradex/broker/    Phase 9, siehe oben; nt8/ = protocol/adapter, einziger Ort
+                  mit dem Bridge-Orderprotokoll
 tradex/api/       FastAPI + DTOs = einziger UI-Vertrag; routes/stream.py = SSE
 ui/               React+lightweight-charts; MobileDashboard = eigene Handyansicht
 bridge_nt8/       Protokoll + NinjaScript-AddOn (C#), in NT 8.1.8.2 im Einsatz
@@ -434,37 +433,22 @@ greifen zu — Persistenzschicht darf nichts über Backtest/Broker wissen.
 
 ## NEXT STEPS
 
-Plan (vollständig, mit Begründungen):
-`C:\Users\nikla\.claude\plans\ich-m-chte-in-meinem-squishy-mist.md`
+**Broker-Entscheidung (Aug 2026), abgeschlossen:** Alpaca verworfen (handelt
+keine Futures), Tradovate-Demo endet nach 14 Tagen, IBKR erst gebaut und dann
+in Phase 9 durch NinjaTrader ersetzt. Damit kommen Marktdaten und Ausführung
+aus einem System, und der Paper-Nachweis ist eine Eigenschaft des Kontos statt
+einer Zusammensetzung aus Indizien. **IB Gateway wird nicht mehr gebraucht.**
 
-**Broker-Entscheidung (Aug 2026):** Alpaca geprüft und verworfen — handelt
-**keine Futures**, MNQ dort nicht verfügbar. Tradovate-Demo endet nach 14
-Tagen. Es bleibt bei IBKR; das **Free-Trial-Paper-Konto verlangt keine
-Ausweisprüfung** (KYC erst bei Echtgeld).
+**Der Betrieb hängt jetzt an NinjaTrader:** AddOn übersetzt (F5 nach jeder
+Änderung an `TradeXBridge.cs`), Bridge auf 39473, Konto `Sim101`. Ohne
+laufendes NinjaTrader gibt es weder Kurse noch Orders.
 
-**IB Gateway (10.45, eingerichtet und geprüft)** — nicht TWS, das Gateway hat
-keine Chart-Oberfläche. Ports **4002 Paper / 4001 Live** (TWS wäre
-7497/7496). Die Option „Enable ActiveX and Socket Clients" **existiert im
-Gateway nicht** — sie ist TWS-only, der Socket ist dort immer an. Gesetzt
-sind: „Schreibgeschützte API" (Read-Only) **aus**, Socket Port 4002,
-Master-API-Client-ID leer, „Nur Verbindungen vom lokalen Host zulassen" **an**.
+**Offene Punkte:** Sicherer Handy-Fernzugriff (Auth + HTTPS): Tailscale /
+Cloudflare Tunnel / Reverse Proxy — noch nicht gewählt.
 
-„API-Client: getrennt" (rot) im Gateway ist der **Ruhezustand**, kein Fehler —
-die Skripte verbinden, arbeiten, trennen. „Verlaufsdaten: Inactive: ushmds"
-(gelb) ebenfalls: Historie kommt über NinjaTrader, nicht über IBKR.
-
-**Tägliche Zwangsabmeldung:** Gateway/TWS erzwingen einen Neustart pro Tag,
-abschalten geht nicht, nur die Uhrzeit wählen. Steht auf **23:30** — mitten in
-der MNQ-Pause (16:00–17:00 CT). Ohne IBC verlangt das Gateway danach eine
-Anmeldung von Hand; bis dahin ist das ein echter Betriebsfall, kein Randfall.
-
-**Offene Punkte:** IBC-Auto-Login für die `.bat` (speichert das Passwort im
-Klartext — bewusst so entschieden, noch nicht gebaut). Sicherer
-Handy-Fernzugriff (Auth + HTTPS): Tailscale / Cloudflare Tunnel / Reverse
-Proxy — noch nicht gewählt.
-
-**Dauerhaft offen / bewusst so:** Der Paper-Nachweis bleibt technisch indirekt
-— Port + `DU`-Präfix + Allowlist sind zusammen das Stärkste, was die TWS-API
-zulässt. Gebühren, die NACH der Füllmeldung eintreffen, landen im Schätzpfad
-von `BrokerExecutor._build_trade` (mit Warnung) — bewusst, statt ein zweites
-Order-Ereignis zu erzeugen, das im Protokoll wie eine zweite Füllung aussähe.
+**Dauerhaft offen / bewusst so:** Gebühren, die NACH der Füllmeldung
+eintreffen, landen im Schätzpfad von `BrokerExecutor._build_trade` (mit
+Warnung) — bewusst, statt ein zweites Order-Ereignis zu erzeugen, das im
+Protokoll wie eine zweite Füllung aussähe. Und `Sim101` meldet ohne
+Commission-Template gar keine Gebühren; Papertrades sind dann optimistischer
+als der Backtest.
