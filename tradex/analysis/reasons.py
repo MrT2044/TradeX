@@ -114,6 +114,10 @@ BROKER_MODE_NOT_PAPER: Final = "broker.mode_not_paper"
 BROKER_LIVE_BLOCKED: Final = "broker.live_blocked"
 BROKER_TRADING_DISABLED: Final = "broker.trading_disabled"
 BROKER_PORT_NOT_PAPER: Final = "broker.port_not_paper"
+#: NinjaTrader-Gegenstueck zu `BROKER_PORT_NOT_PAPER`. Nicht derselbe Code,
+#: weil es nicht dieselbe Aussage ist: der Port sagt nur, wohin verbunden
+#: wurde, `Account.Provider` ist eine Eigenschaft des Kontos.
+BROKER_ACCOUNT_NOT_SIMULATED: Final = "broker.account_not_simulated"
 BROKER_NOT_CONNECTED: Final = "broker.not_connected"
 BROKER_ACCOUNT_UNCONFIRMED: Final = "broker.account_unconfirmed"
 BROKER_CONTRACT_UNKNOWN: Final = "broker.contract_unknown"
@@ -185,6 +189,7 @@ ALL_CODES: Final[tuple[str, ...]] = (
     BROKER_LIVE_BLOCKED,
     BROKER_TRADING_DISABLED,
     BROKER_PORT_NOT_PAPER,
+    BROKER_ACCOUNT_NOT_SIMULATED,
     BROKER_NOT_CONNECTED,
     BROKER_ACCOUNT_UNCONFIRMED,
     BROKER_CONTRACT_UNKNOWN,

@@ -502,6 +502,40 @@ class LiveConfig(_Frozen):
     display_tick_max_age_seconds: float = Field(default=15.0, gt=0)
 
 
+class Nt8Config(_Frozen):
+    """Orderanbindung ueber die NinjaTrader-Bridge (Phase 9).
+
+    Auffaellig kurz im Vergleich zu `IbkrConfig` - und das ist der Punkt. Dort
+    brauchte es Ports, Praefixe und eine Allowlist, weil die TWS-API kein Feld
+    "dies ist ein Paper-Konto" kennt und der Nachweis aus mehreren indirekten
+    Hinweisen zusammengesetzt werden musste. Hier entscheidet
+    `Account.Provider == Provider.Simulator`, eine Eigenschaft des Kontos, und
+    zwar im AddOn.
+
+    **Es gibt keinen Schalter, der das aushebelt.** Nicht hier, nicht in
+    `.env`, nicht auf der Kommandozeile.
+    """
+
+    host: str = "127.0.0.1"
+
+    #: Derselbe Socket wie die Marktdaten. Der Adapter macht trotzdem eine
+    #: eigene Verbindung auf - Begruendung in `broker/nt8/adapter.py`.
+    port: int = Field(default=39473, ge=1, le=65535)
+
+    #: Gewuenschtes Konto. Leer heisst "das einzige Simulationskonto"; gibt es
+    #: mehrere, lehnt das AddOn ab statt zu waehlen. `Backtest` ist naemlich
+    #: ebenfalls Provider.Simulator - und hat net_liquidation 0.
+    account: str = "Sim101"
+
+    #: Zusaetzliche Einschraenkung. Sie kann ein Simulationskonto ausschliessen,
+    #: aber NIE eines freischalten, das keines ist - sonst waere sie ein
+    #: Schalter an der Kontosperre vorbei. Leer heisst: keine weitere
+    #: Einschraenkung, die Simulator-Pruefung traegt allein.
+    allowed_accounts: tuple[str, ...] = ()
+
+    connect_timeout_seconds: float = Field(default=10.0, gt=0)
+
+
 class BrokerConfig(_Frozen):
     """Orderanbindung (Spec Paragraph 24, Phase 8).
 
@@ -512,7 +546,13 @@ class BrokerConfig(_Frozen):
     """
 
     enabled: bool = False
-    provider: Literal["ibkr"] = "ibkr"
+    provider: Literal["ibkr", "nt8"] = "nt8"
+    """Welche Anbindung Orders sendet.
+
+    `nt8` seit Phase 9: Marktdaten und Ausfuehrung kommen damit aus demselben
+    System, und der Paper-Nachweis ist direkt statt indirekt. `ibkr` bleibt
+    waehlbar, bis der Ersatz nachweislich traegt (A7 loescht ihn).
+    """
 
     #: Wie alt die Bar sein darf, aus der ein Signal stammt, damit daraus noch
     #: eine Order werden kann - Wanduhrzeit, nicht Bar-Abstand. Steht bewusst
@@ -531,6 +571,7 @@ class BrokerConfig(_Frozen):
     reconnect_delays_seconds: tuple[float, ...] = (1.0, 2.0, 5.0, 10.0, 30.0)
 
     ibkr: IbkrConfig = IbkrConfig()
+    nt8: Nt8Config = Nt8Config()
 
     @model_validator(mode="after")
     def _reconnect_delays_are_positive(self) -> BrokerConfig:

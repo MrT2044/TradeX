@@ -35,6 +35,7 @@ from queue import Empty, Queue
 from typing import Any
 
 from tradex.broker.base import BrokerError, BrokerNotConnected
+from tradex.broker.guard import confirm_simulated_account
 from tradex.broker.nt8 import protocol
 from tradex.broker.types import (
     ROLE_ENTRY,
@@ -74,6 +75,7 @@ class NinjaTraderBroker:
         account: str = "",
         allow_orders: bool = False,
         tradeable_symbols: tuple[str, ...] = (),
+        allowed_accounts: tuple[str, ...] = (),
         connect_timeout_seconds: float = 10.0,
     ) -> None:
         self.host = host
@@ -81,6 +83,9 @@ class NinjaTraderBroker:
         #: Gewuenschtes Konto. Leer heisst "das einzige Simulationskonto" - das
         #: AddOn lehnt ab, wenn es mehr als eines gibt, statt zu waehlen.
         self.wanted_account = account
+        #: Zusaetzliche Einschraenkung, ausgewertet in `guard.py`. Sie kann ein
+        #: Simulationskonto ausschliessen, aber nie eines freischalten.
+        self.allowed_accounts = allowed_accounts
         self.allow_orders = allow_orders
         self.tradeable = {s.upper() for s in tradeable_symbols}
         self.connect_timeout_seconds = connect_timeout_seconds
@@ -367,22 +372,21 @@ class NinjaTraderBroker:
         """Den eigenen Zustand nachfuehren, BEVOR das Ereignis herausgeht."""
         if ereignis.kind == "account":
             payload = ereignis.payload
-            simuliert = bool(payload.get("is_simulation", False))
-            self._account = AccountInfo(
-                account=str(payload.get("account", "")),
+            # Das Urteil faellt `guard.py` und nicht dieses Modul: die
+            # Sicherheitskette gehoert an EINE Stelle, sonst gibt es zwei
+            # Fassungen davon, was ein Simulationskonto ist. Hier wird nur
+            # eingesetzt, was die Bridge gemeldet hat.
+            geprueft = confirm_simulated_account(
+                str(payload.get("account", "")),
+                is_simulation=bool(payload.get("is_simulation", False)),
+                provider=str(payload.get("provider", "")),
+                allowed_accounts=self.allowed_accounts,
+            )
+            self._account = replace(
+                geprueft,
                 currency=str(payload.get("currency", "")),
                 net_liquidation=float(payload.get("net_liquidation", 0.0)),  # type: ignore[arg-type]
                 available_funds=float(payload.get("buying_power", 0.0)),  # type: ignore[arg-type]
-                account_type=str(payload.get("provider", "")),
-                is_paper=simuliert,
-                # WORAUF sich das Flag stuetzt - ohne diese Angabe waere es
-                # eine Behauptung. `Account.Provider` ist eine Eigenschaft des
-                # Kontos, keine Namenskonvention.
-                paper_evidence=(
-                    f"Account.Provider={payload.get('provider', '?')} (NinjaTrader)"
-                    if simuliert
-                    else "kein Provider.Simulator"
-                ),
             )
             self._account_seen.set()
             return

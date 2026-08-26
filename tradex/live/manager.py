@@ -273,13 +273,28 @@ def build_broker(
     )
     traded = {name: instruments[name] for name in request.symbols}
 
-    if config.broker.provider == "ibkr":
+    if config.broker.provider == "nt8":
+        from tradex.broker.nt8.adapter import NinjaTraderBroker
+
+        adapter: BrokerInterface = NinjaTraderBroker(
+            host=config.broker.nt8.host,
+            port=config.broker.nt8.port,
+            account=config.broker.nt8.account,
+            # Die Kette hat oben zugestimmt - erst DANN gibt es ueberhaupt
+            # einen Sendeweg. Ohne Orderrecht laesst sich verbinden, ohne dass
+            # etwas hinausgehen kann.
+            allow_orders=True,
+            tradeable_symbols=request.symbols,
+            allowed_accounts=config.broker.nt8.allowed_accounts,
+            connect_timeout_seconds=config.broker.nt8.connect_timeout_seconds,
+        )
+    elif config.broker.provider == "ibkr":
         # Lazy: `ibapi` kommt aus einem Installer und nicht von PyPI. Der
         # Import gehoert deshalb hinter die Entscheidung, ihn zu brauchen.
         from tradex.broker.ibkr.adapter import IbkrAdapter
 
-        adapter: BrokerInterface = IbkrAdapter(config, traded, journal=journal, env=env)
-    else:  # pragma: no cover - `provider` ist per Config auf "ibkr" begrenzt
+        adapter = IbkrAdapter(config, traded, journal=journal, env=env)
+    else:  # pragma: no cover - `provider` ist per Config begrenzt
         raise LookupError(f"Unbekannter Broker {config.broker.provider!r}")
 
     store: BrokerOrderStore | None = None

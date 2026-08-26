@@ -380,11 +380,16 @@ live:            # Phase 5/8 - Betriebsparameter, keine Handelsregeln
   # Markt aus, wo in Wirklichkeit die Verbindung weg ist.
   display_tick_max_age_seconds: 15.0
 
-broker:          # Phase 8 - Orderanbindung an Interactive Brokers (Paper)
+broker:          # Phase 9 - Orderanbindung an NinjaTrader (Simulationskonto)
   # AUS bedeutet: es entstehen keine Orders. Signale werden weiterhin intern
   # durchsimuliert wie bisher, es fliesst nichts und es geht nichts hinaus.
   enabled: true
-  provider: ibkr
+
+  # nt8 seit Phase 9: Marktdaten und Ausfuehrung kommen aus demselben System,
+  # und der Paper-Nachweis ist direkt (Account.Provider == Provider.Simulator)
+  # statt indirekt (Port + DU-Praefix + Allowlist). `ibkr` bleibt waehlbar,
+  # bis der Ersatz nachweislich traegt.
+  provider: nt8
 
   # Wie alt die Bar hinter einem Signal sein darf, damit daraus noch eine Order
   # wird - gemessen an der Wanduhr. Ein Signal aus einer Datenluecke wuerde
@@ -394,6 +399,21 @@ broker:          # Phase 8 - Orderanbindung an Interactive Brokers (Paper)
   max_orders_per_minute: 6
   order_timeout_seconds: 30.0
   reconnect_delays_seconds: [1.0, 2.0, 5.0, 10.0, 30.0]
+
+  nt8:
+    host: "127.0.0.1"
+    port: 39473                 # dieselbe Bridge wie die Marktdaten
+
+    # Leer hiesse "das einzige Simulationskonto". Ausdruecklich benannt, weil
+    # `Backtest` ebenfalls Provider.Simulator ist und net_liquidation 0 hat -
+    # "welches Konto hat der Bot gehandelt?" soll niemand raten muessen.
+    account: "Sim101"
+
+    # Zusaetzliche Einschraenkung. Kann ein Simulationskonto AUSSCHLIESSEN,
+    # aber nie eines freischalten, das keines ist - sonst waere es ein
+    # Schalter an der Kontosperre vorbei.
+    allowed_accounts: []
+    connect_timeout_seconds: 10.0
 
   ibkr:
     host: "127.0.0.1"

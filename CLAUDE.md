@@ -133,7 +133,48 @@ gleichzeitig (gemeinsames Risikobuch). Betriebsereignisse gehen in
 auf Port 39473, `nt8_symbol` in `instruments.yaml` beim Roll nachziehen).
 NinjaTrader ist **reine Datenquelle** — kein Order-Kanal.
 
-### Phase 8: IBKR-Paper-Anbindung — Architektur
+### Phase 9: Orderweg über NinjaTrader
+
+**Die Weiche steht auf `broker.provider: nt8`.** Marktdaten und Ausführung
+kommen damit aus demselben System. `ibkr` bleibt wählbar, bis der Ersatz
+nachweislich trägt.
+
+Der Preis: Orders und Kursdaten teilen sich einen Socket — die alte Zusage
+„keine Orders über diesen Weg" ist damit aufgegeben. Abgesichert wird das
+anders: Befehls-Whitelist **ohne Default-Zweig** (eine verstümmelte Zeile
+passt auf keinen Befehlsnamen), `order_key` als Pflichtfeld, getrennte
+Warteschlangen — und vor allem die Kontosperre.
+
+**Der Paper-Nachweis ist hier direkt statt indirekt.** Orders gehen
+ausschließlich auf Konten mit `Account.Provider == Provider.Simulator`,
+entschieden **im AddOn**. Das ist eine Eigenschaft des Kontos, keine
+Namenskonvention — anders als bei IBKR, wo Port + `DU`-Präfix + Allowlist
+zusammen das Stärkste waren, was die TWS-API zulässt. Die Prüfung steht
+**doppelt**: im AddOn und in `guard.confirm_simulated_account()`. Eine
+Sicherheitskette, die nur auf der Seite läuft, die man selbst kontrolliert,
+beschreibt die Grenze, statt sie zu prüfen. **Einen Schalter daran vorbei gibt
+es nicht** — nicht in `default.yaml`, nicht in `.env`; ein Wächtertest hält
+das fest. `broker.nt8.allowed_accounts` kann ein Simulationskonto
+*ausschließen*, aber nie eines freischalten, das keines ist.
+
+`tradex/broker/nt8/`: `protocol.py` (rein — Zustandsabbildung, Befehle,
+Ereignisse; ohne NinjaTrader prüfbar) · `adapter.py` (`NinjaTraderBroker`,
+eigener Socket). **Eigene Verbindung neben dem Feed**, obwohl das AddOn an
+alle Clients sendet: der Orderweg darf nicht daran hängen, ob ein Feed läuft,
+und `NinjaTraderFeed` wirft beim Wiederverbinden seinen Zustand weg — für Bars
+richtig, für offene Orders nicht.
+
+Zwei Fallen, beide schon eingebaut: NinjaTrader vergibt Order-IDs als
+**Zeichenketten**, `BrokerOrder` rechnet mit `int` (Zuordnung im Adapter, sie
+braucht Zustand). Und ein unbekannter Zustand wird `INACTIVE`, nie geraten —
+`INACTIVE` ist endgültig, auf `ACCEPTED` zu raten führte eine Order als
+lebend, die es vielleicht nicht mehr gibt.
+
+**`nt8_symbol` gilt jetzt für den Orderweg mit.** Fehlt es, ist das Instrument
+lautlos nicht handelbar — das AddOn lehnt erst beim Senden mit
+`instrument_unknown` ab. Beim Roll für MNQ **und NQ** nachziehen.
+
+### Phase 8: IBKR-Paper-Anbindung — Architektur (wird in A7 entfernt)
 
 Ziel: Marktdaten weiter von NinjaTrader, Ausführung über IB Gateway auf ein
 Paper-Konto, Strategie/Analyse unangetastet. **Vollständiger Plan:**

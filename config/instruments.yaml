@@ -75,6 +75,12 @@ instruments:
     name: "E-mini Nasdaq-100"
     databento_dataset: GLBX.MDP3
     databento_continuous: "NQ.c.0"
+    # Wie bei MNQ: NinjaTraders Datenanbieter will den Kontrakt, nicht das
+    # Wurzelsymbol. Fehlte der Eintrag, waere NQ seit der Umstellung auf den
+    # NT8-Orderweg gar nicht mehr handelbar - und zwar lautlos, weil das AddOn
+    # erst beim Senden mit `instrument_unknown` ablehnt.
+    # MUSS beim Roll nachgezogen werden, gemeinsam mit `expiry` unten.
+    nt8_symbol: "NQ SEP26"
     ibkr:
       symbol: NQ
       sec_type: FUT

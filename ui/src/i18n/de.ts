@@ -181,6 +181,11 @@ export const reasonText: Record<string, (p: ReasonParams) => string> = {
   'broker.not_connected': () => 'Keine Verbindung zum IB Gateway - Order wird nicht gesammelt',
   'broker.account_unconfirmed': (p) =>
     `Konto ${p.account ?? 'unbekannt'} nicht eindeutig als Paper-Konto bestaetigt`,
+  // NinjaTrader-Gegenstueck. Bewusst ein eigener Code: "unbestaetigt" heisst,
+  // der Nachweis fehlt - "nicht simuliert" heisst, er liegt vor und faellt
+  // negativ aus.
+  'broker.account_not_simulated': (p) =>
+    `Konto ${p.account ?? 'unbekannt'} ist kein Simulationskonto (${p.nachweis ?? 'ohne Nachweis'})`,
   'broker.contract_unknown': (p) => `Fuer ${p.symbol} ist kein IBKR-Kontrakt hinterlegt`,
   'broker.contract_ambiguous': (p) =>
     `Kontrakt fuer ${p.symbol} nicht eindeutig (${p.treffer} Treffer) - es wird nicht geraten`,
@@ -235,6 +240,7 @@ export const reasonLabel: Record<string, string> = {
   'broker.port_not_paper': 'Kein Paper-Port',
   'broker.not_connected': 'Keine Broker-Verbindung',
   'broker.account_unconfirmed': 'Paper-Konto nicht bestaetigt',
+  'broker.account_not_simulated': 'Kein Simulationskonto',
   'broker.contract_unknown': 'Kein IBKR-Kontrakt hinterlegt',
   'broker.contract_ambiguous': 'Kontrakt nicht eindeutig',
   'broker.data_stale': 'Kursdaten zu alt',

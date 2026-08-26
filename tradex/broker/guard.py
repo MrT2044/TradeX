@@ -14,15 +14,24 @@ Zustand hereingereicht und faellt ein Urteil. Deshalb laesst sich die ganze
 Kette in Tests durchspielen, ohne dass ein IB Gateway laeuft - und das ist die
 einzige Art, wie sie ueberhaupt geprueft werden kann.
 
-Warum der Port kein Beweis ist
-------------------------------
-`port == 4002` sagt nur, wohin verbunden wurde. Ein Gateway laesst sich auf
-jedem Port betreiben, und die TWS-API kennt kein Feld "dies ist ein
-Paper-Konto". Der belastbarste verfuegbare Nachweis ist die tatsaechliche
-Kontonummer gegen eine hinterlegte Liste; ersatzweise das Praefix `DU`/`DF`,
-das IBKR seit Jahren fuer Paper-Konten verwendet - eine Konvention, keine
-zugesicherte Eigenschaft. Genau deshalb steht beides hier und nicht eines
-allein.
+Zwei Anbindungen, zwei Nachweise
+--------------------------------
+Die Stufen 1-4 (`check_configuration`) gelten fuer beide: Modus, Freigabe,
+`.env`. Ab Stufe 5 unterscheiden sie sich, weil die Anbindungen verschieden
+starke Auskuenfte geben.
+
+**IBKR** (`check_port`, `confirm_paper_account`): `port == 4002` sagt nur,
+wohin verbunden wurde - ein Gateway laesst sich auf jedem Port betreiben, und
+die TWS-API kennt kein Feld "dies ist ein Paper-Konto". Der belastbarste
+verfuegbare Nachweis ist die Kontonummer gegen eine hinterlegte Liste;
+ersatzweise das Praefix `DU`/`DF` - eine Konvention, keine zugesicherte
+Eigenschaft. Deshalb steht dort beides und nicht eines allein.
+
+**NinjaTrader** (`confirm_simulated_account`): `Account.Provider ==
+Provider.Simulator` ist eine Eigenschaft des KONTOS. Der Nachweis ist damit
+direkt statt indirekt - das ist der eigentliche Gewinn der Migration. Er wird
+im AddOn gefaellt, also auf der Seite, die dieses Programm nicht kontrolliert;
+die Pruefung hier ist die zweite Haelfte davon.
 """
 
 from __future__ import annotations
@@ -115,12 +124,99 @@ def check_configuration(
 
 
 def check_port(broker: BrokerConfig, port: int) -> Reason:
-    """Stufe 5: verbunden wird ausschliesslich auf den Paper-Port."""
+    """Stufe 5 fuer IBKR: verbunden wird ausschliesslich auf den Paper-Port.
+
+    Fuer NinjaTrader gibt es dazu bewusst KEIN Gegenstueck. Der Bridge-Port
+    trennt nicht zwischen Simulation und Echtgeld - er ist nur die Adresse des
+    AddOns. Eine Portpruefung dort waere eine Stufe, die aussieht wie ein
+    Nachweis und keiner ist; die Kontosperre traegt das allein.
+    """
     ok = port == broker.ibkr.paper_port
     return Reason(
         R.BROKER_PORT_NOT_PAPER,
         ok,
         {"port": port, "erwartet": broker.ibkr.paper_port},
+    )
+
+
+def confirm_simulated_account(
+    account: str,
+    is_simulation: bool,
+    provider: str = "",
+    allowed_accounts: tuple[str, ...] = (),
+) -> AccountInfo:
+    """Stufe 7 fuer NinjaTrader - und der Grund, warum die Migration sich lohnt.
+
+    Bei IBKR blieb der Paper-Nachweis strukturell indirekt: Port, `DU`-Praefix
+    und Allowlist zusammen, weil die TWS-API kein Feld "dies ist ein
+    Paper-Konto" kennt. Ein Praefix ist eine Konvention, keine zugesicherte
+    Eigenschaft.
+
+    Hier ist er direkt. `is_simulation` stammt aus `Account.Provider ==
+    Provider.Simulator`, einer Eigenschaft des KONTOS, entschieden im AddOn -
+    also auf der Seite, die TradeX nicht kontrolliert. Diese Pruefung hier ist
+    die zweite Haelfte: eine Sicherheitskette, die nur dort laeuft, wo man
+    selbst schreibt, beschreibt die Grenze, statt sie zu pruefen.
+
+    `allowed_accounts` ist optional und wirkt NUR zusaetzlich. Sie kann ein
+    Simulationskonto ausschliessen, aber nie eines freischalten, das keines
+    ist - sonst waere sie ein Schalter an der Kontosperre vorbei.
+    """
+    name = account.strip()
+    if not name:
+        return AccountInfo(
+            account="",
+            account_type=provider,
+            is_paper=False,
+            paper_evidence="kein Konto gemeldet",
+        )
+
+    if not is_simulation:
+        return AccountInfo(
+            account=name,
+            account_type=provider,
+            is_paper=False,
+            paper_evidence=f"Account.Provider={provider or '?'} ist nicht Simulator",
+        )
+
+    erlaubt = tuple(e.strip().upper() for e in allowed_accounts if e.strip())
+    if erlaubt and name.upper() not in erlaubt:
+        # Die Liste engt ein, sie erlaubt nicht. Ein Konto, das der Simulator
+        # fuehrt, aber nicht auf der Liste steht, wird abgelehnt - etwa das
+        # `Backtest`-Konto, das ebenfalls Provider.Simulator ist.
+        return AccountInfo(
+            account=name,
+            account_type=provider,
+            is_paper=False,
+            paper_evidence="Simulationskonto, aber nicht in broker.nt8.allowed_accounts",
+        )
+
+    nachweis = "Account.Provider=Simulator (NinjaTrader)"
+    if erlaubt:
+        nachweis += " + allowlist"
+    return AccountInfo(
+        account=name,
+        account_type=provider,
+        is_paper=True,
+        paper_evidence=nachweis,
+    )
+
+
+def check_simulated_account(account: AccountInfo | None) -> Reason:
+    """Die NinjaTrader-Stufe als Reason - fuer die Kette vor jeder Order.
+
+    Eigener Code statt `BROKER_ACCOUNT_UNCONFIRMED`: die beiden sagen
+    Verschiedenes. "Unbestaetigt" heisst, der Nachweis fehlt; "nicht
+    simuliert" heisst, er liegt vor und faellt negativ aus. Im Protokoll ist
+    das der Unterschied zwischen "wir wissen es nicht" und "wir wissen, dass
+    nicht".
+    """
+    if account is None:
+        return Reason(R.BROKER_ACCOUNT_NOT_SIMULATED, False, {"account": None})
+    return Reason(
+        R.BROKER_ACCOUNT_NOT_SIMULATED,
+        account.is_paper,
+        {"account": account.account, "nachweis": account.paper_evidence},
     )
 
 
