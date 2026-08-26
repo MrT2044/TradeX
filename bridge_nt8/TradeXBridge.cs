@@ -410,7 +410,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                 Flatten(ExtractString(line, "account"), ExtractString(line, "symbol"));
                 return;
             }
-            if (type == "account_query") { SendAccount(); return; }
+            // Der Kontoname MUSS durchgereicht werden. Ohne ihn fragte die
+            // Abfrage nach "irgendeinem Simulationskonto" - und weil an dieser
+            // Installation `Sim101` UND `Backtest` beide Provider.Simulator
+            // sind, lehnte die Aufloesung wegen Mehrdeutigkeit ab. Die
+            // Verbindung scheiterte damit an einer Sicherheitsstufe, die
+            // voellig richtig arbeitete; nur die Frage war falsch gestellt.
+            if (type == "account_query") { SendAccount(ExtractString(line, "account")); return; }
 
             if (type != "subscribe" && type != "unsubscribe" && type != "history") return;
 
@@ -1124,9 +1130,9 @@ namespace NinjaTrader.NinjaScript.AddOns
                 + "}");
         }
 
-        private void SendAccount()
+        private void SendAccount(string wanted)
         {
-            Account account = ResolveSimAccount(string.Empty);
+            Account account = ResolveSimAccount(wanted);
             if (account == null)
             {
                 // Warum nichts gefunden wurde, statt nur DASS nichts gefunden
@@ -1152,9 +1158,13 @@ namespace NinjaTrader.NinjaScript.AddOns
                             + "\",\"connection_provider\":\"" + Escape(verbindung) + "\"}");
                     }
                 }
+                // WONACH gesucht wurde gehoert in die Meldung. "kein Konto mit
+                // Provider=Simulator" allein war irrefuehrend: es gab zwei
+                // davon, und abgelehnt wurde wegen Mehrdeutigkeit.
                 Broadcast("{\"type\":\"account\",\"name\":\"\",\"provider\":\"\""
                     + ",\"is_simulation\":false"
-                    + ",\"detail\":\"kein Konto mit Provider=Simulator\""
+                    + ",\"detail\":\"kein eindeutiges Konto mit Provider=Simulator (gesucht: "
+                    + Escape(wanted.Length > 0 ? wanted : "<beliebig>") + ")\""
                     + ",\"candidates\":[" + string.Join(",", teile.ToArray()) + "]}");
                 return;
             }

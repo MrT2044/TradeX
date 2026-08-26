@@ -35,6 +35,9 @@ dist/
 logs/
 *.log
 
+# --- Graphify ---
+graphify-out/
+
 # --- OS / Editor ---
 Thumbs.db
 desktop.ini

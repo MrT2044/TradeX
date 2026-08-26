@@ -286,11 +286,29 @@ glattgestellten Position eine Gegenposition aus.
 #### `account_query`
 
 ```json
-{"type":"account_query"}
+{"type":"account_query","account":"Sim101"}
 ```
 
 Beantwortet mit `account` (siehe unten). Fragt **nicht** blockierend nach:
 TradeX' Statusabfragen dürfen nie auf den Broker warten.
+
+**`account` gehört dazu, auch wenn es nur ein Konto gibt.** Ohne den Namen
+fragt die Abfrage nach *irgendeinem* Simulationskonto — und das ist an einer
+echten Installation mehrdeutig: gemessen am 26.08.2026 sind `Sim101` **und**
+`Backtest` beide `Provider.Simulator`. Die Auflösung lehnt Mehrdeutigkeit ab,
+und die Verbindung scheiterte damit an einer Stufe, die völlig richtig
+arbeitete — falsch gestellt war die Frage. `Backtest` hat `net_liquidation 0`;
+„das erste passende" hätte stillschweigend darauf gehandelt.
+
+Die Ablehnung nennt deshalb **alle gesehenen Konten** mit ihrem
+`account_provider`, statt nur zu melden, dass nichts gefunden wurde:
+
+```json
+{"type":"account","name":"","provider":"","is_simulation":false,
+ "detail":"kein eindeutiges Konto mit Provider=Simulator (gesucht: <beliebig>)",
+ "candidates":[{"name":"Sim101","account_provider":"Simulator","connection_provider":"Provider31"},
+               {"name":"Backtest","account_provider":"Simulator","connection_provider":"<keine Verbindung>"}]}
+```
 
 ### Nachrichten: AddOn → Python
 
@@ -359,12 +377,17 @@ die Information, die man nach einem Verbindungsabriss braucht.
 
 ```json
 {"type":"account","name":"Sim101","provider":"Simulator","is_simulation":true,
- "currency":"USD","net_liquidation":100000.00,"buying_power":100000.00,
- "realized_pnl":0.0}
+ "net_liquidation":100000.00,"buying_power":100000.00,"realized_pnl":0.0}
 ```
 
 `is_simulation` kommt aus `Provider.Simulator` und ist der Paper-Nachweis, auf
 den sich `guard.py` stützt.
+
+**`currency` fehlt bewusst.** Die Spezifikation sah es ursprünglich vor, das
+AddOn sendet es nicht, und der Python-Client liest deshalb einen leeren
+String. Nachgetragen wird es zusammen mit der nächsten AddOn-Änderung, die
+ohnehin ein Neuübersetzen erfordert — ein F5-Zyklus für ein Anzeigefeld wäre
+den Aufwand nicht wert. Bis dahin steht der Kontostand ohne Währung da.
 
 #### `order_rejected` — abgelehnt, bevor etwas hinausging
 

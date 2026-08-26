@@ -260,6 +260,39 @@ def test_der_paper_nachweis_kommt_aus_dem_kontoereignis():
     assert ereignis.payload["net_liquidation"] == 100000.0
 
 
+def test_die_kontoabfrage_traegt_den_namen():
+    """Ohne Namen ist die Frage an einer echten Installation mehrdeutig -
+    `Sim101` und `Backtest` sind beide Provider.Simulator."""
+    assert protocol.account_query_command("Sim101") == {
+        "type": "account_query",
+        "account": "Sim101",
+    }
+    # Ohne Konfiguration bleibt das Feld weg statt leer zu sein: ein leerer
+    # Name heisst im AddOn "beliebig", und das ist etwas anderes als "keine
+    # Angabe gemacht".
+    assert protocol.account_query_command() == {"type": "account_query"}
+
+
+def test_eine_abgelehnte_kontoabfrage_behaelt_ihre_begruendung():
+    """Das AddOn erhebt Begruendung und Kandidatenliste ausdruecklich. Sie
+    wegzuwerfen zwaenge zum Raten - genau dafuer gibt es sie."""
+    ereignis = protocol.parse_event(
+        {
+            "type": "account",
+            "name": "",
+            "is_simulation": False,
+            "detail": "kein eindeutiges Konto mit Provider=Simulator (gesucht: <beliebig>)",
+            "candidates": [
+                {"name": "Sim101", "account_provider": "Simulator"},
+                {"name": "Backtest", "account_provider": "Simulator"},
+            ],
+        }
+    )
+    assert ereignis is not None
+    assert "gesucht" in str(ereignis.payload["detail"])
+    assert len(ereignis.payload["candidates"]) == 2  # type: ignore[arg-type]
+
+
 def test_ein_fehlendes_is_simulation_gilt_als_nicht_simuliert():
     """Fail closed. Ein fehlendes Feld darf nie als Freigabe gelesen werden -
     das ist der Unterschied zwischen "nicht geprueft" und "geprueft und gut"."""

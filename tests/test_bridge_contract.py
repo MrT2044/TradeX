@@ -125,6 +125,36 @@ def test_orderbefehle_sind_eine_whitelist(addon: str):
         )
 
 
+def test_die_kontoabfrage_reicht_den_namen_durch(addon: str):
+    """Sonst fragt sie nach "irgendeinem Simulationskonto".
+
+    An dieser Installation sind `Sim101` UND `Backtest` beide
+    Provider.Simulator; die Aufloesung lehnt Mehrdeutigkeit ab. Die Verbindung
+    scheiterte damit an einer Stufe, die richtig arbeitete - falsch gestellt
+    war die Frage. Genau dieser Fehler ist am 26.08.2026 im Betrieb
+    aufgetreten, nachdem alle Tests gruen waren.
+    """
+    assert 'SendAccount(ExtractString(line, "account"))' in addon, (
+        "account_query muss den Kontonamen weiterreichen"
+    )
+    assert "private void SendAccount(string wanted)" in addon
+    assert "ResolveSimAccount(string.Empty)" not in addon, (
+        "die Kontoabfrage darf nicht mehr nach <beliebig> fragen"
+    )
+
+
+def test_eine_abgelehnte_kontoabfrage_nennt_die_kandidaten(addon: str):
+    """Ein leeres Ergebnis ohne Begruendung zwingt zum Raten.
+
+    Die Meldung muss sagen, WONACH gesucht wurde und WAS es gibt - sonst ist
+    "kein Konto mit Provider=Simulator" bei zwei vorhandenen Simulationskonten
+    schlicht irrefuehrend.
+    """
+    assert '\\"candidates\\"' in addon
+    assert '\\"account_provider\\"' in addon
+    assert "gesucht: " in addon, "die Ablehnung muss das gesuchte Konto nennen"
+
+
 def test_orders_nur_auf_simulationskonten(addon: str):
     """Die Sperre, auf der die ganze Ausbaustufe ruht.
 

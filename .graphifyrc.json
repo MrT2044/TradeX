@@ -1,0 +1,34 @@
+{
+  "exclude_patterns": [
+    ".venv",
+    ".git",
+    "node_modules",
+    "__pycache__",
+    "*.pyc",
+    ".pytest_cache",
+    ".ruff_cache",
+    "dist",
+    "build",
+    "*.egg-info",
+    ".env",
+    ".env.local",
+    "data/",
+    "archive/",
+    "backups/",
+    "logs/"
+  ],
+  "include_patterns": [
+    "**/*.py",
+    "**/*.ts",
+    "**/*.tsx",
+    "**/*.cs",
+    "**/*.yaml",
+    "**/*.yml",
+    "**/*.json",
+    "**/*.md"
+  ],
+  "max_file_size_kb": 500,
+  "semantic_analysis": true,
+  "extract_rationale": true,
+  "community_detection": true
+}

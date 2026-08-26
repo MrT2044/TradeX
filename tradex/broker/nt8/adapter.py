@@ -102,6 +102,10 @@ class NinjaTraderBroker:
         self._positions: dict[str, BrokerPosition] = {}
         self._account: AccountInfo | None = None
         self._account_seen = threading.Event()
+        #: Begruendung und Kandidatenliste aus einer abgelehnten Kontoabfrage.
+        #: Nur dann gefuellt - im Erfolgsfall gibt es nichts zu erklaeren.
+        self._account_detail = ""
+        self._account_candidates: str = ""
 
         #: NinjaTrader vergibt Order-IDs als Zeichenketten, TradeX rechnet mit
         #: `int`. Die Zuordnung lebt hier, weil sie Zustand braucht.
@@ -131,7 +135,7 @@ class NinjaTraderBroker:
         self._thread = threading.Thread(target=self._read_loop, name="nt8-broker", daemon=True)
         self._thread.start()
 
-        self._send(protocol.account_query_command())
+        self._send(protocol.account_query_command(self.wanted_account))
         if not self._account_seen.wait(self.connect_timeout_seconds):
             self.disconnect()
             raise BrokerNotConnected(
@@ -141,10 +145,15 @@ class NinjaTraderBroker:
 
         info = self._account
         if info is None or not info.is_paper:
+            grund = self._account_detail or (info.paper_evidence if info else "keine Antwort")
             self.disconnect()
+            # Die Kandidatenliste gehoert in die Meldung. "Konto  ist kein
+            # Simulationskonto" nannte weder das gesuchte noch die
+            # vorhandenen Konten - und liess damit genau die Frage offen, die
+            # man als Naechstes stellt.
             raise BrokerError(
-                f"{protocol.REJECT_ACCOUNT_NOT_SIMULATED}: "
-                f"Konto {info.account if info else '<unbekannt>'} ist kein Simulationskonto"
+                f"{protocol.REJECT_ACCOUNT_NOT_SIMULATED}: {grund}"
+                + (f"\n  Vorhandene Konten: {self._account_candidates}" if self._account_candidates else "")
             )
         log.info("nt8_broker_verbunden", konto=info.account, nachweis=info.paper_evidence)
 
@@ -382,6 +391,14 @@ class NinjaTraderBroker:
                 provider=str(payload.get("provider", "")),
                 allowed_accounts=self.allowed_accounts,
             )
+            self._account_detail = str(payload.get("detail", ""))
+            kandidaten = payload.get("candidates") or []
+            if isinstance(kandidaten, list):
+                self._account_candidates = ", ".join(
+                    f"{k.get('name')} (Provider={k.get('account_provider')})"
+                    for k in kandidaten
+                    if isinstance(k, dict)
+                )
             self._account = replace(
                 geprueft,
                 currency=str(payload.get("currency", "")),

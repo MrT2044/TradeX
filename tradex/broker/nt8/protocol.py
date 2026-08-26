@@ -148,8 +148,21 @@ def flatten_command(account: str, symbol: str = "") -> dict[str, Any]:
     return command
 
 
-def account_query_command() -> dict[str, Any]:
-    return {"type": "account_query"}
+def account_query_command(account: str = "") -> dict[str, Any]:
+    """Kontodaten abfragen - MIT Namen.
+
+    Der Name muss mit, auch wenn er nur einer ist. Ohne ihn fragt die Abfrage
+    nach "irgendeinem Simulationskonto", und das ist an einer echten
+    Installation mehrdeutig: `Sim101` und `Backtest` sind beide
+    `Provider.Simulator`. Das AddOn lehnt Mehrdeutigkeit ab - richtigerweise,
+    denn "welches Konto hat der Bot gehandelt?" ist keine Frage, die man
+    offenlaesst. Die Verbindung scheiterte damit an einer Stufe, die korrekt
+    arbeitete; falsch gestellt war die Frage.
+    """
+    befehl: dict[str, Any] = {"type": "account_query"}
+    if account:
+        befehl["account"] = account
+    return befehl
 
 
 def encode(command: dict[str, Any]) -> bytes:
@@ -233,6 +246,12 @@ def parse_event(message: dict[str, Any]) -> BrokerEvent | None:
                 "net_liquidation": _as_float(message.get("net_liquidation")),
                 "buying_power": _as_float(message.get("buying_power")),
                 "realized_pnl": _as_float(message.get("realized_pnl")),
+                # Warum es nicht geklappt hat, samt allen Konten, die das
+                # AddOn gesehen hat. Diese Auskunft gibt es nur bei einer
+                # Ablehnung - sie hier wegzuwerfen zwaenge zum Raten, und
+                # genau dafuer hat die C#-Seite sie erhoben.
+                "detail": str(message.get("detail", "")),
+                "candidates": message.get("candidates", []),
             },
         )
 
