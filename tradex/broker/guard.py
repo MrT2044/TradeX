@@ -202,4 +202,3 @@ def check_simulated_account(account: AccountInfo | None) -> Reason:
         account.is_paper,
         {"account": account.account, "nachweis": account.paper_evidence},
     )
-
